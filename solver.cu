@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <cuda_runtime.h>
 #include <nvtx3/nvtx3.hpp>
 
@@ -30,13 +29,6 @@ namespace visual_smoke {
 
         inline std::uint64_t velocity_z_bytes(const int32_t nx, const int32_t ny, const int32_t nz) {
             return static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny) * static_cast<std::uint64_t>(nz + 1) * sizeof(float);
-        }
-
-        inline std::uint64_t workspace_bytes(const int32_t nx, const int32_t ny, const int32_t nz) {
-            return scalar_bytes(nx, ny, nz) * 11ull
-                 + velocity_x_bytes(nx, ny, nz)
-                 + velocity_y_bytes(nx, ny, nz)
-                 + velocity_z_bytes(nx, ny, nz);
         }
 
         inline dim3 make_grid(int nx, int ny, int nz, const dim3& block) {
@@ -528,53 +520,37 @@ uint64_t visual_simulation_of_smoke_velocity_z_bytes(int32_t nx, int32_t ny, int
     return visual_smoke::velocity_z_bytes(nx, ny, nz);
 }
 
-uint64_t visual_simulation_of_smoke_workspace_bytes(int32_t nx, int32_t ny, int32_t nz) {
-    if (nx <= 0 || ny <= 0 || nz <= 0) {
-        return 0;
-    }
-    return visual_smoke::workspace_bytes(nx, ny, nz);
-}
-
 int32_t visual_simulation_of_smoke_clear_async(
     void* density,
-    uint64_t density_bytes,
     void* temperature,
-    uint64_t temperature_bytes,
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
-    float cell_size,
     void* cuda_stream) {
     using namespace visual_smoke;
     if (nx <= 0 || ny <= 0 || nz <= 0) {
         return 1001;
     }
-    if (cell_size <= 0.0f) {
-        return 1002;
-    }
     const auto cell_bytes = visual_smoke::scalar_bytes(nx, ny, nz);
     const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
     const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
     const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-    if (density == nullptr || density_bytes < cell_bytes) {
+    if (density == nullptr) {
         return 2001;
     }
-    if (temperature == nullptr || temperature_bytes < cell_bytes) {
+    if (temperature == nullptr) {
         return 2002;
     }
-    if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+    if (velocity_x == nullptr) {
         return 2003;
     }
-    if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+    if (velocity_y == nullptr) {
         return 2004;
     }
-    if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+    if (velocity_z == nullptr) {
         return 2005;
     }
 
@@ -589,19 +565,13 @@ int32_t visual_simulation_of_smoke_clear_async(
 
 int32_t visual_simulation_of_smoke_add_source_async(
     void* density,
-    uint64_t density_bytes,
     void* temperature,
-    uint64_t temperature_bytes,
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
-    float cell_size,
     float center_x,
     float center_y,
     float center_z,
@@ -619,9 +589,6 @@ int32_t visual_simulation_of_smoke_add_source_async(
     if (nx <= 0 || ny <= 0 || nz <= 0) {
         return 1001;
     }
-    if (cell_size <= 0.0f) {
-        return 1002;
-    }
     if (radius <= 0.0f) {
         return 1005;
     }
@@ -629,19 +596,19 @@ int32_t visual_simulation_of_smoke_add_source_async(
     const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
     const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
     const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-    if (density == nullptr || density_bytes < cell_bytes) {
+    if (density == nullptr) {
         return 2001;
     }
-    if (temperature == nullptr || temperature_bytes < cell_bytes) {
+    if (temperature == nullptr) {
         return 2002;
     }
-    if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+    if (velocity_x == nullptr) {
         return 2003;
     }
-    if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+    if (velocity_y == nullptr) {
         return 2004;
     }
-    if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+    if (velocity_z == nullptr) {
         return 2005;
     }
 
@@ -674,21 +641,28 @@ int32_t visual_simulation_of_smoke_add_source_async(
 
 int32_t visual_simulation_of_smoke_step_async(
     void* density,
-    uint64_t density_bytes,
     void* temperature,
-    uint64_t temperature_bytes,
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
     float cell_size,
-    void* workspace,
-    uint64_t workspace_bytes,
+    void* temporary_previous_density,
+    void* temporary_previous_temperature,
+    void* temporary_previous_velocity_x,
+    void* temporary_previous_velocity_y,
+    void* temporary_previous_velocity_z,
+    void* temporary_pressure,
+    void* temporary_divergence,
+    void* temporary_omega_x,
+    void* temporary_omega_y,
+    void* temporary_omega_z,
+    void* temporary_omega_magnitude,
+    void* temporary_force_x,
+    void* temporary_force_y,
+    void* temporary_force_z,
     float dt,
     float ambient_temperature,
     float density_buoyancy,
@@ -717,53 +691,78 @@ int32_t visual_simulation_of_smoke_step_async(
     const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
     const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
     const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-    if (density == nullptr || density_bytes < cell_bytes) {
+    if (density == nullptr) {
         return 2001;
     }
-    if (temperature == nullptr || temperature_bytes < cell_bytes) {
+    if (temperature == nullptr) {
         return 2002;
     }
-    if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+    if (velocity_x == nullptr) {
         return 2003;
     }
-    if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+    if (velocity_y == nullptr) {
         return 2004;
     }
-    if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+    if (velocity_z == nullptr) {
         return 2005;
     }
-    if (workspace == nullptr || workspace_bytes < visual_smoke::workspace_bytes(nx, ny, nz)) {
+    if (temporary_previous_density == nullptr) {
         return 2007;
     }
+    if (temporary_previous_temperature == nullptr) {
+        return 2008;
+    }
+    if (temporary_previous_velocity_x == nullptr) {
+        return 2009;
+    }
+    if (temporary_previous_velocity_y == nullptr) {
+        return 2010;
+    }
+    if (temporary_previous_velocity_z == nullptr) {
+        return 2011;
+    }
+    if (temporary_pressure == nullptr) {
+        return 2012;
+    }
+    if (temporary_divergence == nullptr) {
+        return 2013;
+    }
+    if (temporary_omega_x == nullptr) {
+        return 2014;
+    }
+    if (temporary_omega_y == nullptr) {
+        return 2015;
+    }
+    if (temporary_omega_z == nullptr) {
+        return 2016;
+    }
+    if (temporary_omega_magnitude == nullptr) {
+        return 2017;
+    }
+    if (temporary_force_x == nullptr) {
+        return 2018;
+    }
+    if (temporary_force_y == nullptr) {
+        return 2019;
+    }
+    if (temporary_force_z == nullptr) {
+        return 2020;
+    }
 
-    auto* cursor = reinterpret_cast<std::byte*>(workspace);
-    auto* density_prev = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* temperature_prev = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* u_prev = reinterpret_cast<float*>(cursor);
-    cursor += u_bytes;
-    auto* v_prev = reinterpret_cast<float*>(cursor);
-    cursor += v_bytes;
-    auto* w_prev = reinterpret_cast<float*>(cursor);
-    cursor += w_bytes;
-    auto* pressure = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* divergence = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* omega_x = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* omega_y = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* omega_z = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* omega_mag = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* force_x = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* force_y = reinterpret_cast<float*>(cursor);
-    cursor += cell_bytes;
-    auto* force_z = reinterpret_cast<float*>(cursor);
+    auto* density_prev = reinterpret_cast<float*>(temporary_previous_density);
+    auto* temperature_prev = reinterpret_cast<float*>(temporary_previous_temperature);
+    auto* u_prev = reinterpret_cast<float*>(temporary_previous_velocity_x);
+    auto* v_prev = reinterpret_cast<float*>(temporary_previous_velocity_y);
+    auto* w_prev = reinterpret_cast<float*>(temporary_previous_velocity_z);
+    auto* pressure = reinterpret_cast<float*>(temporary_pressure);
+    auto* divergence = reinterpret_cast<float*>(temporary_divergence);
+    auto* omega_x = reinterpret_cast<float*>(temporary_omega_x);
+    auto* omega_y = reinterpret_cast<float*>(temporary_omega_y);
+    auto* omega_z = reinterpret_cast<float*>(temporary_omega_z);
+    auto* omega_mag = reinterpret_cast<float*>(temporary_omega_magnitude);
+    auto* force_x = reinterpret_cast<float*>(temporary_force_x);
+    auto* force_y = reinterpret_cast<float*>(temporary_force_y);
+    auto* force_z = reinterpret_cast<float*>(temporary_force_z);
     auto* density_f = reinterpret_cast<float*>(density);
     auto* temperature_f = reinterpret_cast<float*>(temperature);
     auto* u = reinterpret_cast<float*>(velocity_x);
@@ -832,17 +831,12 @@ int32_t visual_simulation_of_smoke_step_async(
 
 int32_t visual_simulation_of_smoke_compute_velocity_magnitude_async(
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     void* destination,
-    uint64_t destination_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
-    float cell_size,
     int32_t block_x,
     int32_t block_y,
     int32_t block_z,
@@ -851,23 +845,16 @@ int32_t visual_simulation_of_smoke_compute_velocity_magnitude_async(
     if (nx <= 0 || ny <= 0 || nz <= 0) {
         return 1001;
     }
-    if (cell_size <= 0.0f) {
-        return 1002;
-    }
-    const auto cell_bytes = visual_smoke::scalar_bytes(nx, ny, nz);
-    const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
-    const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
-    const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-    if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+    if (velocity_x == nullptr) {
         return 2003;
     }
-    if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+    if (velocity_y == nullptr) {
         return 2004;
     }
-    if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+    if (velocity_z == nullptr) {
         return 2005;
     }
-    if (destination == nullptr || destination_bytes < cell_bytes) {
+    if (destination == nullptr) {
         return 2006;
     }
 

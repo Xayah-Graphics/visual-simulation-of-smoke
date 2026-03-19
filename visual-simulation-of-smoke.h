@@ -28,14 +28,27 @@ Error code scheme:
 1003  : invalid dt
 1004  : invalid iteration count
 1005  : invalid source radius
-2xxx  : buffer/workspace errors
+2xxx  : buffer errors
 2001  : invalid density buffer
 2002  : invalid temperature buffer
 2003  : invalid velocity_x buffer
 2004  : invalid velocity_y buffer
 2005  : invalid velocity_z buffer
 2006  : invalid destination buffer
-2007  : invalid workspace buffer
+2007  : invalid temporary previous density buffer
+2008  : invalid temporary previous temperature buffer
+2009  : invalid temporary previous velocity_x buffer
+2010  : invalid temporary previous velocity_y buffer
+2011  : invalid temporary previous velocity_z buffer
+2012  : invalid temporary pressure buffer
+2013  : invalid temporary divergence buffer
+2014  : invalid temporary omega_x buffer
+2015  : invalid temporary omega_y buffer
+2016  : invalid temporary omega_z buffer
+2017  : invalid temporary omega_magnitude buffer
+2018  : invalid temporary force_x buffer
+2019  : invalid temporary force_y buffer
+2020  : invalid temporary force_z buffer
 5xxx  : CUDA runtime or kernel launch failure
 5001  : CUDA call failed
 */
@@ -44,40 +57,27 @@ VISUAL_SIMULATION_OF_SMOKE_API uint64_t visual_simulation_of_smoke_scalar_field_
 VISUAL_SIMULATION_OF_SMOKE_API uint64_t visual_simulation_of_smoke_velocity_x_bytes(int32_t nx, int32_t ny, int32_t nz);
 VISUAL_SIMULATION_OF_SMOKE_API uint64_t visual_simulation_of_smoke_velocity_y_bytes(int32_t nx, int32_t ny, int32_t nz);
 VISUAL_SIMULATION_OF_SMOKE_API uint64_t visual_simulation_of_smoke_velocity_z_bytes(int32_t nx, int32_t ny, int32_t nz);
-VISUAL_SIMULATION_OF_SMOKE_API uint64_t visual_simulation_of_smoke_workspace_bytes(int32_t nx, int32_t ny, int32_t nz);
 
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_clear_async(
     void* density,
-    uint64_t density_bytes,
     void* temperature,
-    uint64_t temperature_bytes,
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
-    float cell_size,
     void* cuda_stream);
 
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_add_source_async(
     void* density,
-    uint64_t density_bytes,
     void* temperature,
-    uint64_t temperature_bytes,
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
-    float cell_size,
     float center_x,
     float center_y,
     float center_z,
@@ -94,21 +94,28 @@ VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_add_source_asy
 
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_step_async(
     void* density,
-    uint64_t density_bytes,
     void* temperature,
-    uint64_t temperature_bytes,
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
     float cell_size,
-    void* workspace,
-    uint64_t workspace_bytes,
+    void* temporary_previous_density,
+    void* temporary_previous_temperature,
+    void* temporary_previous_velocity_x,
+    void* temporary_previous_velocity_y,
+    void* temporary_previous_velocity_z,
+    void* temporary_pressure,
+    void* temporary_divergence,
+    void* temporary_omega_x,
+    void* temporary_omega_y,
+    void* temporary_omega_z,
+    void* temporary_omega_magnitude,
+    void* temporary_force_x,
+    void* temporary_force_y,
+    void* temporary_force_z,
     float dt,
     float ambient_temperature,
     float density_buoyancy,
@@ -123,17 +130,12 @@ VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_step_async(
 
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_compute_velocity_magnitude_async(
     void* velocity_x,
-    uint64_t velocity_x_bytes,
     void* velocity_y,
-    uint64_t velocity_y_bytes,
     void* velocity_z,
-    uint64_t velocity_z_bytes,
     void* destination,
-    uint64_t destination_bytes,
     int32_t nx,
     int32_t ny,
     int32_t nz,
-    float cell_size,
     int32_t block_x,
     int32_t block_y,
     int32_t block_z,
