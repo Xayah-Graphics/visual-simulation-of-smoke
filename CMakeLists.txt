@@ -36,6 +36,7 @@ add_executable(
 )
 
 target_compile_definitions(visual-simulation-of-smoke PRIVATE VISUAL_SIMULATION_OF_SMOKE_BUILD_SHARED)
+target_include_directories(visual-simulation-of-smoke PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(visual-simulation-of-smoke PRIVATE CUDA::cudart)
 
 target_link_libraries(visual-simulation-of-smoke-app PRIVATE visual-simulation-of-smoke CUDA::cudart)

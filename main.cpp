@@ -38,15 +38,6 @@ bool smoke_ok(int32_t code, const char* what, const VisualSimulationOfSmokeConte
     return false;
 }
 
-VisualSimulationOfSmokeBufferView make_f32_device_buffer(void* data, uint64_t size_bytes) {
-    return VisualSimulationOfSmokeBufferView{
-        .data = data,
-        .size_bytes = size_bytes,
-        .format = VISUAL_SIMULATION_OF_SMOKE_BUFFER_FORMAT_F32,
-        .memory_type = VISUAL_SIMULATION_OF_SMOKE_MEMORY_TYPE_CUDA_DEVICE,
-    };
-}
-
 } // namespace
 
 int main() {
@@ -77,12 +68,29 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    const uint64_t density_bytes = visual_simulation_of_smoke_context_required_density_bytes(context);
-    if (!cuda_ok(cudaMalloc(reinterpret_cast<void**>(&density), density_bytes), "cudaMalloc density")) {
+    const uint64_t scalar_bytes = visual_simulation_of_smoke_context_required_scalar_field_bytes(context);
+    if (!cuda_ok(cudaMalloc(reinterpret_cast<void**>(&density), scalar_bytes), "cudaMalloc density")) {
         cudaStreamDestroy(stream);
         visual_simulation_of_smoke_context_destroy(context);
         return EXIT_FAILURE;
     }
+
+    const ScalarField density_field{
+        .grid =
+            FieldGridDesc{
+                .nx = desc.nx,
+                .ny = desc.ny,
+                .nz = desc.nz,
+                .cell_size = desc.cell_size,
+            },
+        .values =
+            FieldBufferView{
+                .data = density,
+                .size_bytes = scalar_bytes,
+                .format = FIELD_FORMAT_F32,
+                .memory_type = FIELD_MEMORY_TYPE_CUDA_DEVICE,
+            },
+    };
 
     if (!smoke_ok(visual_simulation_of_smoke_clear_async(context, stream), "visual_simulation_of_smoke_clear_async", context)) {
         cudaFree(density);
@@ -116,7 +124,7 @@ int main() {
 
     {
         nvtx3::scoped_range snapshot_range{"vsmoke.demo.snapshot"};
-        if (!smoke_ok(visual_simulation_of_smoke_snapshot_density_async(context, make_f32_device_buffer(density, density_bytes), stream), "visual_simulation_of_smoke_snapshot_density_async", context) ||
+        if (!smoke_ok(visual_simulation_of_smoke_snapshot_density_async(context, &density_field, stream), "visual_simulation_of_smoke_snapshot_density_async", context) ||
             !cuda_ok(cudaStreamSynchronize(stream), "cudaStreamSynchronize")) {
             cudaFree(density);
             cudaStreamDestroy(stream);
@@ -127,8 +135,8 @@ int main() {
 
     {
         nvtx3::scoped_range copy_range{"vsmoke.demo.copy_to_host"};
-        std::vector<float> host_density(static_cast<size_t>(density_bytes / sizeof(float)), 0.0f);
-        if (!cuda_ok(cudaMemcpy(host_density.data(), density, density_bytes, cudaMemcpyDeviceToHost), "cudaMemcpy density")) {
+        std::vector<float> host_density(static_cast<size_t>(scalar_bytes / sizeof(float)), 0.0f);
+        if (!cuda_ok(cudaMemcpy(host_density.data(), density, scalar_bytes, cudaMemcpyDeviceToHost), "cudaMemcpy density")) {
             cudaFree(density);
             cudaStreamDestroy(stream);
             visual_simulation_of_smoke_context_destroy(context);

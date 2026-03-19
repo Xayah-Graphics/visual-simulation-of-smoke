@@ -13,7 +13,8 @@
 
 namespace visual_smoke {
     using Desc = VisualSimulationOfSmokeContextDesc;
-    using BufferView = VisualSimulationOfSmokeBufferView;
+    using ScalarFieldT = ScalarField;
+    using VectorFieldT = VectorField;
     using Source = VisualSimulationOfSmokeSourceDesc;
     using Stream = cudaStream_t;
 
@@ -491,18 +492,29 @@ namespace visual_smoke {
         Solver(const Solver&) = delete;
         Solver& operator=(const Solver&) = delete;
 
-        [[nodiscard]] std::uint64_t density_bytes() const noexcept { return cell_bytes_; }
-        [[nodiscard]] std::uint64_t temperature_bytes() const noexcept { return cell_bytes_; }
+        [[nodiscard]] std::uint64_t scalar_field_bytes() const noexcept { return cell_bytes_; }
+        [[nodiscard]] std::uint64_t vector_field_component_bytes(uint32_t component) const noexcept {
+            if (component == VECTOR_FIELD_COMPONENT_X) {
+                return velocity_.x.size_bytes;
+            }
+            if (component == VECTOR_FIELD_COMPONENT_Y) {
+                return velocity_.y.size_bytes;
+            }
+            if (component == VECTOR_FIELD_COMPONENT_Z) {
+                return velocity_.z.size_bytes;
+            }
+            return 0;
+        }
 
         void clear(Stream stream);
         void add_source(const Source& source, Stream stream);
         void step(Stream stream);
-        void snapshot_density(const BufferView& destination, Stream stream);
-        void snapshot_temperature(const BufferView& destination, Stream stream);
-        void snapshot_velocity_magnitude(const BufferView& destination, Stream stream);
+        void snapshot_density(const ScalarFieldT& destination, Stream stream);
+        void snapshot_temperature(const ScalarFieldT& destination, Stream stream);
+        void snapshot_velocity_magnitude(const ScalarFieldT& destination, Stream stream);
 
     private:
-        void validate_snapshot_(const BufferView& destination, const char* name) const;
+        void validate_snapshot_(const ScalarFieldT& destination, const char* name) const;
 
         Desc desc_{};
         std::uint64_t cell_count_ = 0;
@@ -510,25 +522,21 @@ namespace visual_smoke {
         std::uint64_t v_count_ = 0;
         std::uint64_t w_count_ = 0;
         std::uint64_t cell_bytes_ = 0;
-        float* density_ = nullptr;
-        float* density_prev_ = nullptr;
-        float* temperature_ = nullptr;
-        float* temperature_prev_ = nullptr;
-        float* u_ = nullptr;
-        float* u_prev_ = nullptr;
-        float* v_ = nullptr;
-        float* v_prev_ = nullptr;
-        float* w_ = nullptr;
-        float* w_prev_ = nullptr;
-        float* pressure_ = nullptr;
-        float* divergence_ = nullptr;
-        float* omega_x_ = nullptr;
-        float* omega_y_ = nullptr;
-        float* omega_z_ = nullptr;
-        float* omega_mag_ = nullptr;
-        float* force_x_ = nullptr;
-        float* force_y_ = nullptr;
-        float* force_z_ = nullptr;
+        ScalarFieldT density_{};
+        ScalarFieldT density_prev_{};
+        ScalarFieldT temperature_{};
+        ScalarFieldT temperature_prev_{};
+        VectorFieldT velocity_{};
+        VectorFieldT velocity_prev_{};
+        ScalarFieldT pressure_{};
+        ScalarFieldT divergence_{};
+        ScalarFieldT omega_x_{};
+        ScalarFieldT omega_y_{};
+        ScalarFieldT omega_z_{};
+        ScalarFieldT omega_mag_{};
+        ScalarFieldT force_x_{};
+        ScalarFieldT force_y_{};
+        ScalarFieldT force_z_{};
     };
 
     Solver::Solver(const Desc& desc) : desc_(desc) {
@@ -548,92 +556,120 @@ namespace visual_smoke {
         w_count_ = static_cast<std::uint64_t>(desc_.nx) * static_cast<std::uint64_t>(desc_.ny) * static_cast<std::uint64_t>(desc_.nz + 1);
         cell_bytes_ = cell_count_ * sizeof(float);
 
-        auto allocate = [](float*& field, std::uint64_t count) {
-            check_cuda(cudaMalloc(reinterpret_cast<void**>(&field), count * sizeof(float)), "cudaMalloc");
+        const FieldGridDesc scalar_grid{
+            .nx = desc_.nx,
+            .ny = desc_.ny,
+            .nz = desc_.nz,
+            .cell_size = desc_.cell_size,
+        };
+        auto allocate_scalar = [&](ScalarFieldT& field, std::uint64_t count) {
+            field.grid = scalar_grid;
+            field.values.size_bytes = count * sizeof(float);
+            field.values.format = FIELD_FORMAT_F32;
+            field.values.memory_type = FIELD_MEMORY_TYPE_CUDA_DEVICE;
+            check_cuda(cudaMalloc(&field.values.data, field.values.size_bytes), "cudaMalloc scalar");
+        };
+        auto allocate_vector = [&](VectorFieldT& field) {
+            field.grid = scalar_grid;
+            field.layout = VECTOR_FIELD_LAYOUT_STAGGERED_MAC;
+            field.x.size_bytes = u_count_ * sizeof(float);
+            field.y.size_bytes = v_count_ * sizeof(float);
+            field.z.size_bytes = w_count_ * sizeof(float);
+            field.x.format = FIELD_FORMAT_F32;
+            field.y.format = FIELD_FORMAT_F32;
+            field.z.format = FIELD_FORMAT_F32;
+            field.x.memory_type = FIELD_MEMORY_TYPE_CUDA_DEVICE;
+            field.y.memory_type = FIELD_MEMORY_TYPE_CUDA_DEVICE;
+            field.z.memory_type = FIELD_MEMORY_TYPE_CUDA_DEVICE;
+            check_cuda(cudaMalloc(&field.x.data, field.x.size_bytes), "cudaMalloc velocity.x");
+            check_cuda(cudaMalloc(&field.y.data, field.y.size_bytes), "cudaMalloc velocity.y");
+            check_cuda(cudaMalloc(&field.z.data, field.z.size_bytes), "cudaMalloc velocity.z");
         };
 
-        allocate(density_, cell_count_);
-        allocate(density_prev_, cell_count_);
-        allocate(temperature_, cell_count_);
-        allocate(temperature_prev_, cell_count_);
-        allocate(u_, u_count_);
-        allocate(u_prev_, u_count_);
-        allocate(v_, v_count_);
-        allocate(v_prev_, v_count_);
-        allocate(w_, w_count_);
-        allocate(w_prev_, w_count_);
-        allocate(pressure_, cell_count_);
-        allocate(divergence_, cell_count_);
-        allocate(omega_x_, cell_count_);
-        allocate(omega_y_, cell_count_);
-        allocate(omega_z_, cell_count_);
-        allocate(omega_mag_, cell_count_);
-        allocate(force_x_, cell_count_);
-        allocate(force_y_, cell_count_);
-        allocate(force_z_, cell_count_);
+        allocate_scalar(density_, cell_count_);
+        allocate_scalar(density_prev_, cell_count_);
+        allocate_scalar(temperature_, cell_count_);
+        allocate_scalar(temperature_prev_, cell_count_);
+        allocate_vector(velocity_);
+        allocate_vector(velocity_prev_);
+        allocate_scalar(pressure_, cell_count_);
+        allocate_scalar(divergence_, cell_count_);
+        allocate_scalar(omega_x_, cell_count_);
+        allocate_scalar(omega_y_, cell_count_);
+        allocate_scalar(omega_z_, cell_count_);
+        allocate_scalar(omega_mag_, cell_count_);
+        allocate_scalar(force_x_, cell_count_);
+        allocate_scalar(force_y_, cell_count_);
+        allocate_scalar(force_z_, cell_count_);
 
         clear(nullptr);
         check_cuda(cudaDeviceSynchronize(), "cudaDeviceSynchronize constructor");
     }
 
     Solver::~Solver() {
-        cudaFree(density_);
-        cudaFree(density_prev_);
-        cudaFree(temperature_);
-        cudaFree(temperature_prev_);
-        cudaFree(u_);
-        cudaFree(u_prev_);
-        cudaFree(v_);
-        cudaFree(v_prev_);
-        cudaFree(w_);
-        cudaFree(w_prev_);
-        cudaFree(pressure_);
-        cudaFree(divergence_);
-        cudaFree(omega_x_);
-        cudaFree(omega_y_);
-        cudaFree(omega_z_);
-        cudaFree(omega_mag_);
-        cudaFree(force_x_);
-        cudaFree(force_y_);
-        cudaFree(force_z_);
+        cudaFree(density_.values.data);
+        cudaFree(density_prev_.values.data);
+        cudaFree(temperature_.values.data);
+        cudaFree(temperature_prev_.values.data);
+        cudaFree(velocity_.x.data);
+        cudaFree(velocity_.y.data);
+        cudaFree(velocity_.z.data);
+        cudaFree(velocity_prev_.x.data);
+        cudaFree(velocity_prev_.y.data);
+        cudaFree(velocity_prev_.z.data);
+        cudaFree(pressure_.values.data);
+        cudaFree(divergence_.values.data);
+        cudaFree(omega_x_.values.data);
+        cudaFree(omega_y_.values.data);
+        cudaFree(omega_z_.values.data);
+        cudaFree(omega_mag_.values.data);
+        cudaFree(force_x_.values.data);
+        cudaFree(force_y_.values.data);
+        cudaFree(force_z_.values.data);
     }
 
-    void Solver::validate_snapshot_(const BufferView& destination, const char* name) const {
-        if (destination.data == nullptr) {
+    void Solver::validate_snapshot_(const ScalarFieldT& destination, const char* name) const {
+        if (destination.grid.nx != desc_.nx || destination.grid.ny != desc_.ny || destination.grid.nz != desc_.nz) {
+            throw std::invalid_argument(std::string(name) + " grid dimensions must match the context");
+        }
+        if (std::fabs(destination.grid.cell_size - desc_.cell_size) > 1.0e-6f) {
+            throw std::invalid_argument(std::string(name) + " cell_size must match the context");
+        }
+        if (destination.values.data == nullptr) {
             throw std::invalid_argument(std::string(name) + " must provide a non-null device pointer");
         }
-        if (destination.format != VISUAL_SIMULATION_OF_SMOKE_BUFFER_FORMAT_F32) {
-            throw std::invalid_argument(std::string(name) + " must use VISUAL_SIMULATION_OF_SMOKE_BUFFER_FORMAT_F32");
+        if (destination.values.format != FIELD_FORMAT_F32) {
+            throw std::invalid_argument(std::string(name) + " must use FIELD_FORMAT_F32");
         }
-        if (destination.memory_type != VISUAL_SIMULATION_OF_SMOKE_MEMORY_TYPE_CUDA_DEVICE) {
-            throw std::invalid_argument(std::string(name) + " must use VISUAL_SIMULATION_OF_SMOKE_MEMORY_TYPE_CUDA_DEVICE");
+        if (destination.values.memory_type != FIELD_MEMORY_TYPE_CUDA_DEVICE) {
+            throw std::invalid_argument(std::string(name) + " must use FIELD_MEMORY_TYPE_CUDA_DEVICE");
         }
-        if (destination.size_bytes < cell_bytes_) {
+        if (destination.values.size_bytes < cell_bytes_) {
             throw std::invalid_argument(std::string(name) + " size_bytes is too small");
         }
     }
 
     void Solver::clear(Stream stream) {
         nvtx3::scoped_range range{"vsmoke.clear"};
-        check_cuda(cudaMemsetAsync(density_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync density");
-        check_cuda(cudaMemsetAsync(density_prev_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync density_prev");
-        check_cuda(cudaMemsetAsync(temperature_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync temperature");
-        check_cuda(cudaMemsetAsync(temperature_prev_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync temperature_prev");
-        check_cuda(cudaMemsetAsync(u_, 0, u_count_ * sizeof(float), stream), "cudaMemsetAsync u");
-        check_cuda(cudaMemsetAsync(u_prev_, 0, u_count_ * sizeof(float), stream), "cudaMemsetAsync u_prev");
-        check_cuda(cudaMemsetAsync(v_, 0, v_count_ * sizeof(float), stream), "cudaMemsetAsync v");
-        check_cuda(cudaMemsetAsync(v_prev_, 0, v_count_ * sizeof(float), stream), "cudaMemsetAsync v_prev");
-        check_cuda(cudaMemsetAsync(w_, 0, w_count_ * sizeof(float), stream), "cudaMemsetAsync w");
-        check_cuda(cudaMemsetAsync(w_prev_, 0, w_count_ * sizeof(float), stream), "cudaMemsetAsync w_prev");
-        check_cuda(cudaMemsetAsync(pressure_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync pressure");
-        check_cuda(cudaMemsetAsync(divergence_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync divergence");
-        check_cuda(cudaMemsetAsync(omega_x_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync omega_x");
-        check_cuda(cudaMemsetAsync(omega_y_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync omega_y");
-        check_cuda(cudaMemsetAsync(omega_z_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync omega_z");
-        check_cuda(cudaMemsetAsync(omega_mag_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync omega_mag");
-        check_cuda(cudaMemsetAsync(force_x_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync force_x");
-        check_cuda(cudaMemsetAsync(force_y_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync force_y");
-        check_cuda(cudaMemsetAsync(force_z_, 0, cell_count_ * sizeof(float), stream), "cudaMemsetAsync force_z");
+        check_cuda(cudaMemsetAsync(density_.values.data, 0, density_.values.size_bytes, stream), "cudaMemsetAsync density");
+        check_cuda(cudaMemsetAsync(density_prev_.values.data, 0, density_prev_.values.size_bytes, stream), "cudaMemsetAsync density_prev");
+        check_cuda(cudaMemsetAsync(temperature_.values.data, 0, temperature_.values.size_bytes, stream), "cudaMemsetAsync temperature");
+        check_cuda(cudaMemsetAsync(temperature_prev_.values.data, 0, temperature_prev_.values.size_bytes, stream), "cudaMemsetAsync temperature_prev");
+        check_cuda(cudaMemsetAsync(velocity_.x.data, 0, velocity_.x.size_bytes, stream), "cudaMemsetAsync velocity.x");
+        check_cuda(cudaMemsetAsync(velocity_.y.data, 0, velocity_.y.size_bytes, stream), "cudaMemsetAsync velocity.y");
+        check_cuda(cudaMemsetAsync(velocity_.z.data, 0, velocity_.z.size_bytes, stream), "cudaMemsetAsync velocity.z");
+        check_cuda(cudaMemsetAsync(velocity_prev_.x.data, 0, velocity_prev_.x.size_bytes, stream), "cudaMemsetAsync velocity_prev.x");
+        check_cuda(cudaMemsetAsync(velocity_prev_.y.data, 0, velocity_prev_.y.size_bytes, stream), "cudaMemsetAsync velocity_prev.y");
+        check_cuda(cudaMemsetAsync(velocity_prev_.z.data, 0, velocity_prev_.z.size_bytes, stream), "cudaMemsetAsync velocity_prev.z");
+        check_cuda(cudaMemsetAsync(pressure_.values.data, 0, pressure_.values.size_bytes, stream), "cudaMemsetAsync pressure");
+        check_cuda(cudaMemsetAsync(divergence_.values.data, 0, divergence_.values.size_bytes, stream), "cudaMemsetAsync divergence");
+        check_cuda(cudaMemsetAsync(omega_x_.values.data, 0, omega_x_.values.size_bytes, stream), "cudaMemsetAsync omega_x");
+        check_cuda(cudaMemsetAsync(omega_y_.values.data, 0, omega_y_.values.size_bytes, stream), "cudaMemsetAsync omega_y");
+        check_cuda(cudaMemsetAsync(omega_z_.values.data, 0, omega_z_.values.size_bytes, stream), "cudaMemsetAsync omega_z");
+        check_cuda(cudaMemsetAsync(omega_mag_.values.data, 0, omega_mag_.values.size_bytes, stream), "cudaMemsetAsync omega_mag");
+        check_cuda(cudaMemsetAsync(force_x_.values.data, 0, force_x_.values.size_bytes, stream), "cudaMemsetAsync force_x");
+        check_cuda(cudaMemsetAsync(force_y_.values.data, 0, force_y_.values.size_bytes, stream), "cudaMemsetAsync force_y");
+        check_cuda(cudaMemsetAsync(force_z_.values.data, 0, force_z_.values.size_bytes, stream), "cudaMemsetAsync force_z");
     }
 
     void Solver::add_source(const Source& source, Stream stream) {
@@ -644,19 +680,38 @@ namespace visual_smoke {
 
         const dim3 block = make_block(desc_);
         add_source_cells_kernel<<<make_grid(desc_.nx, desc_.ny, desc_.nz, block), block, 0, stream>>>(
-            density_, temperature_, desc_.nx, desc_.ny, desc_.nz,
+            reinterpret_cast<float*>(density_.values.data), reinterpret_cast<float*>(temperature_.values.data), desc_.nx, desc_.ny, desc_.nz,
             source.center_x, source.center_y, source.center_z, source.radius, source.density_amount, source.temperature_amount);
         add_source_u_kernel<<<make_grid(desc_.nx + 1, desc_.ny, desc_.nz, block), block, 0, stream>>>(
-            u_, desc_.nx, desc_.ny, desc_.nz, source.center_x, source.center_y, source.center_z, source.radius, source.velocity_x);
+            reinterpret_cast<float*>(velocity_.x.data), desc_.nx, desc_.ny, desc_.nz, source.center_x, source.center_y, source.center_z, source.radius, source.velocity_x);
         add_source_v_kernel<<<make_grid(desc_.nx, desc_.ny + 1, desc_.nz, block), block, 0, stream>>>(
-            v_, desc_.nx, desc_.ny, desc_.nz, source.center_x, source.center_y, source.center_z, source.radius, source.velocity_y);
+            reinterpret_cast<float*>(velocity_.y.data), desc_.nx, desc_.ny, desc_.nz, source.center_x, source.center_y, source.center_z, source.radius, source.velocity_y);
         add_source_w_kernel<<<make_grid(desc_.nx, desc_.ny, desc_.nz + 1, block), block, 0, stream>>>(
-            w_, desc_.nx, desc_.ny, desc_.nz, source.center_x, source.center_y, source.center_z, source.radius, source.velocity_z);
+            reinterpret_cast<float*>(velocity_.z.data), desc_.nx, desc_.ny, desc_.nz, source.center_x, source.center_y, source.center_z, source.radius, source.velocity_z);
         check_cuda(cudaGetLastError(), "add_source kernels");
     }
 
     void Solver::step(Stream stream) {
         nvtx3::scoped_range step_range{"vsmoke.step"};
+        auto* density = reinterpret_cast<float*>(density_.values.data);
+        auto* density_prev = reinterpret_cast<float*>(density_prev_.values.data);
+        auto* temperature = reinterpret_cast<float*>(temperature_.values.data);
+        auto* temperature_prev = reinterpret_cast<float*>(temperature_prev_.values.data);
+        auto* u = reinterpret_cast<float*>(velocity_.x.data);
+        auto* v = reinterpret_cast<float*>(velocity_.y.data);
+        auto* w = reinterpret_cast<float*>(velocity_.z.data);
+        auto* u_prev = reinterpret_cast<float*>(velocity_prev_.x.data);
+        auto* v_prev = reinterpret_cast<float*>(velocity_prev_.y.data);
+        auto* w_prev = reinterpret_cast<float*>(velocity_prev_.z.data);
+        auto* pressure = reinterpret_cast<float*>(pressure_.values.data);
+        auto* divergence = reinterpret_cast<float*>(divergence_.values.data);
+        auto* omega_x = reinterpret_cast<float*>(omega_x_.values.data);
+        auto* omega_y = reinterpret_cast<float*>(omega_y_.values.data);
+        auto* omega_z = reinterpret_cast<float*>(omega_z_.values.data);
+        auto* omega_mag = reinterpret_cast<float*>(omega_mag_.values.data);
+        auto* force_x = reinterpret_cast<float*>(force_x_.values.data);
+        auto* force_y = reinterpret_cast<float*>(force_y_.values.data);
+        auto* force_z = reinterpret_cast<float*>(force_z_.values.data);
         const dim3 block = make_block(desc_);
         const bool cubic = desc_.use_monotonic_cubic != 0u;
         const dim3 cells = make_grid(desc_.nx, desc_.ny, desc_.nz, block);
@@ -666,71 +721,86 @@ namespace visual_smoke {
 
         {
             nvtx3::scoped_range range{"vsmoke.step.forces"};
-            compute_vorticity_kernel<<<cells, block, 0, stream>>>(u_, v_, w_, omega_x_, omega_y_, omega_z_, omega_mag_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size);
-            compute_confinement_kernel<<<cells, block, 0, stream>>>(omega_x_, omega_y_, omega_z_, omega_mag_, force_x_, force_y_, force_z_, desc_.nx, desc_.ny, desc_.nz, desc_.vorticity_epsilon, desc_.cell_size);
-            apply_u_forces_kernel<<<u_grid, block, 0, stream>>>(u_, force_x_, desc_.nx, desc_.ny, desc_.nz, desc_.dt);
-            apply_v_forces_kernel<<<v_grid, block, 0, stream>>>(v_, density_, temperature_, force_y_, desc_.nx, desc_.ny, desc_.nz, desc_.ambient_temperature, desc_.density_buoyancy, desc_.temperature_buoyancy, desc_.dt);
-            apply_w_forces_kernel<<<w_grid, block, 0, stream>>>(w_, force_z_, desc_.nx, desc_.ny, desc_.nz, desc_.dt);
+            compute_vorticity_kernel<<<cells, block, 0, stream>>>(u, v, w, omega_x, omega_y, omega_z, omega_mag, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size);
+            compute_confinement_kernel<<<cells, block, 0, stream>>>(omega_x, omega_y, omega_z, omega_mag, force_x, force_y, force_z, desc_.nx, desc_.ny, desc_.nz, desc_.vorticity_epsilon, desc_.cell_size);
+            apply_u_forces_kernel<<<u_grid, block, 0, stream>>>(u, force_x, desc_.nx, desc_.ny, desc_.nz, desc_.dt);
+            apply_v_forces_kernel<<<v_grid, block, 0, stream>>>(v, density, temperature, force_y, desc_.nx, desc_.ny, desc_.nz, desc_.ambient_temperature, desc_.density_buoyancy, desc_.temperature_buoyancy, desc_.dt);
+            apply_w_forces_kernel<<<w_grid, block, 0, stream>>>(w, force_z, desc_.nx, desc_.ny, desc_.nz, desc_.dt);
         }
 
-        std::swap(u_, u_prev_);
-        std::swap(v_, v_prev_);
-        std::swap(w_, w_prev_);
+        std::swap(velocity_, velocity_prev_);
+        u = reinterpret_cast<float*>(velocity_.x.data);
+        v = reinterpret_cast<float*>(velocity_.y.data);
+        w = reinterpret_cast<float*>(velocity_.z.data);
+        u_prev = reinterpret_cast<float*>(velocity_prev_.x.data);
+        v_prev = reinterpret_cast<float*>(velocity_prev_.y.data);
+        w_prev = reinterpret_cast<float*>(velocity_prev_.z.data);
 
         {
             nvtx3::scoped_range range{"vsmoke.step.advect_velocity"};
-            advect_u_kernel<<<u_grid, block, 0, stream>>>(u_, u_prev_, v_prev_, w_prev_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic);
-            advect_v_kernel<<<v_grid, block, 0, stream>>>(v_, u_prev_, v_prev_, w_prev_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic);
-            advect_w_kernel<<<w_grid, block, 0, stream>>>(w_, u_prev_, v_prev_, w_prev_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic);
-            set_u_boundary_kernel<<<u_grid, block, 0, stream>>>(u_, desc_.nx, desc_.ny, desc_.nz);
-            set_v_boundary_kernel<<<v_grid, block, 0, stream>>>(v_, desc_.nx, desc_.ny, desc_.nz);
-            set_w_boundary_kernel<<<w_grid, block, 0, stream>>>(w_, desc_.nx, desc_.ny, desc_.nz);
+            advect_u_kernel<<<u_grid, block, 0, stream>>>(u, u_prev, v_prev, w_prev, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic);
+            advect_v_kernel<<<v_grid, block, 0, stream>>>(v, u_prev, v_prev, w_prev, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic);
+            advect_w_kernel<<<w_grid, block, 0, stream>>>(w, u_prev, v_prev, w_prev, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic);
+            set_u_boundary_kernel<<<u_grid, block, 0, stream>>>(u, desc_.nx, desc_.ny, desc_.nz);
+            set_v_boundary_kernel<<<v_grid, block, 0, stream>>>(v, desc_.nx, desc_.ny, desc_.nz);
+            set_w_boundary_kernel<<<w_grid, block, 0, stream>>>(w, desc_.nx, desc_.ny, desc_.nz);
         }
 
         {
             nvtx3::scoped_range range{"vsmoke.step.project"};
-            check_cuda(cudaMemsetAsync(pressure_, 0, cell_bytes_, stream), "cudaMemsetAsync pressure");
-            compute_divergence_kernel<<<cells, block, 0, stream>>>(divergence_, u_, v_, w_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size);
+            check_cuda(cudaMemsetAsync(pressure, 0, cell_bytes_, stream), "cudaMemsetAsync pressure");
+            compute_divergence_kernel<<<cells, block, 0, stream>>>(divergence, u, v, w, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size);
             for (int iteration = 0; iteration < desc_.pressure_iterations; ++iteration) {
-                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure_, divergence_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, 0);
-                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure_, divergence_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, 1);
+                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure, divergence, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, 0);
+                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure, divergence, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, 1);
             }
 
-            subtract_gradient_u_kernel<<<u_grid, block, 0, stream>>>(u_, pressure_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt);
-            subtract_gradient_v_kernel<<<v_grid, block, 0, stream>>>(v_, pressure_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt);
-            subtract_gradient_w_kernel<<<w_grid, block, 0, stream>>>(w_, pressure_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt);
-            set_u_boundary_kernel<<<u_grid, block, 0, stream>>>(u_, desc_.nx, desc_.ny, desc_.nz);
-            set_v_boundary_kernel<<<v_grid, block, 0, stream>>>(v_, desc_.nx, desc_.ny, desc_.nz);
-            set_w_boundary_kernel<<<w_grid, block, 0, stream>>>(w_, desc_.nx, desc_.ny, desc_.nz);
+            subtract_gradient_u_kernel<<<u_grid, block, 0, stream>>>(u, pressure, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt);
+            subtract_gradient_v_kernel<<<v_grid, block, 0, stream>>>(v, pressure, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt);
+            subtract_gradient_w_kernel<<<w_grid, block, 0, stream>>>(w, pressure, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt);
+            set_u_boundary_kernel<<<u_grid, block, 0, stream>>>(u, desc_.nx, desc_.ny, desc_.nz);
+            set_v_boundary_kernel<<<v_grid, block, 0, stream>>>(v, desc_.nx, desc_.ny, desc_.nz);
+            set_w_boundary_kernel<<<w_grid, block, 0, stream>>>(w, desc_.nx, desc_.ny, desc_.nz);
         }
 
         std::swap(density_, density_prev_);
         std::swap(temperature_, temperature_prev_);
+        density = reinterpret_cast<float*>(density_.values.data);
+        density_prev = reinterpret_cast<float*>(density_prev_.values.data);
+        temperature = reinterpret_cast<float*>(temperature_.values.data);
+        temperature_prev = reinterpret_cast<float*>(temperature_prev_.values.data);
         {
             nvtx3::scoped_range range{"vsmoke.step.advect_scalars"};
-            advect_scalar_kernel<<<cells, block, 0, stream>>>(density_, density_prev_, u_, v_, w_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic, true);
-            advect_scalar_kernel<<<cells, block, 0, stream>>>(temperature_, temperature_prev_, u_, v_, w_, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic, false);
+            advect_scalar_kernel<<<cells, block, 0, stream>>>(density, density_prev, u, v, w, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic, true);
+            advect_scalar_kernel<<<cells, block, 0, stream>>>(temperature, temperature_prev, u, v, w, desc_.nx, desc_.ny, desc_.nz, desc_.cell_size, desc_.dt, cubic, false);
         }
         check_cuda(cudaGetLastError(), "step kernels");
     }
 
-    void Solver::snapshot_density(const BufferView& destination, Stream stream) {
+    void Solver::snapshot_density(const ScalarFieldT& destination, Stream stream) {
         nvtx3::scoped_range range{"vsmoke.snapshot_density"};
         validate_snapshot_(destination, "snapshot density destination");
-        check_cuda(cudaMemcpyAsync(destination.data, density_, cell_bytes_, cudaMemcpyDeviceToDevice, stream), "cudaMemcpyAsync density snapshot");
+        check_cuda(cudaMemcpyAsync(destination.values.data, density_.values.data, cell_bytes_, cudaMemcpyDeviceToDevice, stream), "cudaMemcpyAsync density snapshot");
     }
 
-    void Solver::snapshot_temperature(const BufferView& destination, Stream stream) {
+    void Solver::snapshot_temperature(const ScalarFieldT& destination, Stream stream) {
         nvtx3::scoped_range range{"vsmoke.snapshot_temperature"};
         validate_snapshot_(destination, "snapshot temperature destination");
-        check_cuda(cudaMemcpyAsync(destination.data, temperature_, cell_bytes_, cudaMemcpyDeviceToDevice, stream), "cudaMemcpyAsync temperature snapshot");
+        check_cuda(cudaMemcpyAsync(destination.values.data, temperature_.values.data, cell_bytes_, cudaMemcpyDeviceToDevice, stream), "cudaMemcpyAsync temperature snapshot");
     }
 
-    void Solver::snapshot_velocity_magnitude(const BufferView& destination, Stream stream) {
+    void Solver::snapshot_velocity_magnitude(const ScalarFieldT& destination, Stream stream) {
         nvtx3::scoped_range range{"vsmoke.snapshot_velocity_magnitude"};
         validate_snapshot_(destination, "snapshot velocity magnitude destination");
         const dim3 block = make_block(desc_);
-        snapshot_velocity_magnitude_kernel<<<make_grid(desc_.nx, desc_.ny, desc_.nz, block), block, 0, stream>>>(reinterpret_cast<float*>(destination.data), u_, v_, w_, desc_.nx, desc_.ny, desc_.nz);
+        snapshot_velocity_magnitude_kernel<<<make_grid(desc_.nx, desc_.ny, desc_.nz, block), block, 0, stream>>>(
+            reinterpret_cast<float*>(destination.values.data),
+            reinterpret_cast<const float*>(velocity_.x.data),
+            reinterpret_cast<const float*>(velocity_.y.data),
+            reinterpret_cast<const float*>(velocity_.z.data),
+            desc_.nx,
+            desc_.ny,
+            desc_.nz);
         check_cuda(cudaGetLastError(), "snapshot_velocity_magnitude_kernel");
     }
 
@@ -841,12 +911,12 @@ void visual_simulation_of_smoke_context_destroy(VisualSimulationOfSmokeContext* 
     delete context;
 }
 
-uint64_t visual_simulation_of_smoke_context_required_density_bytes(const VisualSimulationOfSmokeContext* context) {
-    return context != nullptr && context->solver != nullptr ? context->solver->density_bytes() : 0;
+uint64_t visual_simulation_of_smoke_context_required_scalar_field_bytes(const VisualSimulationOfSmokeContext* context) {
+    return context != nullptr && context->solver != nullptr ? context->solver->scalar_field_bytes() : 0;
 }
 
-uint64_t visual_simulation_of_smoke_context_required_temperature_bytes(const VisualSimulationOfSmokeContext* context) {
-    return context != nullptr && context->solver != nullptr ? context->solver->temperature_bytes() : 0;
+uint64_t visual_simulation_of_smoke_context_required_vector_field_component_bytes(const VisualSimulationOfSmokeContext* context, uint32_t component) {
+    return context != nullptr && context->solver != nullptr ? context->solver->vector_field_component_bytes(component) : 0;
 }
 
 int32_t visual_simulation_of_smoke_clear_async(VisualSimulationOfSmokeContext* context, void* cuda_stream) {
@@ -870,25 +940,25 @@ int32_t visual_simulation_of_smoke_step_async(VisualSimulationOfSmokeContext* co
     return smoke_try(context, [&] { context->solver->step(to_stream(cuda_stream)); });
 }
 
-int32_t visual_simulation_of_smoke_snapshot_density_async(VisualSimulationOfSmokeContext* context, VisualSimulationOfSmokeBufferView destination, void* cuda_stream) {
-    if (context == nullptr || context->solver == nullptr) {
+int32_t visual_simulation_of_smoke_snapshot_density_async(VisualSimulationOfSmokeContext* context, const ScalarField* destination, void* cuda_stream) {
+    if (context == nullptr || context->solver == nullptr || destination == nullptr) {
         return store_error(context, VISUAL_SIMULATION_OF_SMOKE_ERROR_INVALID_ARGUMENT, "visual_simulation_of_smoke_snapshot_density_async received a null argument");
     }
-    return smoke_try(context, [&] { context->solver->snapshot_density(destination, to_stream(cuda_stream)); });
+    return smoke_try(context, [&] { context->solver->snapshot_density(*destination, to_stream(cuda_stream)); });
 }
 
-int32_t visual_simulation_of_smoke_snapshot_temperature_async(VisualSimulationOfSmokeContext* context, VisualSimulationOfSmokeBufferView destination, void* cuda_stream) {
-    if (context == nullptr || context->solver == nullptr) {
+int32_t visual_simulation_of_smoke_snapshot_temperature_async(VisualSimulationOfSmokeContext* context, const ScalarField* destination, void* cuda_stream) {
+    if (context == nullptr || context->solver == nullptr || destination == nullptr) {
         return store_error(context, VISUAL_SIMULATION_OF_SMOKE_ERROR_INVALID_ARGUMENT, "visual_simulation_of_smoke_snapshot_temperature_async received a null argument");
     }
-    return smoke_try(context, [&] { context->solver->snapshot_temperature(destination, to_stream(cuda_stream)); });
+    return smoke_try(context, [&] { context->solver->snapshot_temperature(*destination, to_stream(cuda_stream)); });
 }
 
-int32_t visual_simulation_of_smoke_snapshot_velocity_magnitude_async(VisualSimulationOfSmokeContext* context, VisualSimulationOfSmokeBufferView destination, void* cuda_stream) {
-    if (context == nullptr || context->solver == nullptr) {
+int32_t visual_simulation_of_smoke_snapshot_velocity_magnitude_async(VisualSimulationOfSmokeContext* context, const ScalarField* destination, void* cuda_stream) {
+    if (context == nullptr || context->solver == nullptr || destination == nullptr) {
         return store_error(context, VISUAL_SIMULATION_OF_SMOKE_ERROR_INVALID_ARGUMENT, "visual_simulation_of_smoke_snapshot_velocity_magnitude_async received a null argument");
     }
-    return smoke_try(context, [&] { context->solver->snapshot_velocity_magnitude(destination, to_stream(cuda_stream)); });
+    return smoke_try(context, [&] { context->solver->snapshot_velocity_magnitude(*destination, to_stream(cuda_stream)); });
 }
 
 uint64_t visual_simulation_of_smoke_last_error_length(void) {
