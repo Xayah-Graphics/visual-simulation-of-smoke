@@ -191,70 +191,54 @@ namespace visual_smoke {
             const float dz        = (static_cast<float>(k) + 0.5f) - cz;
             const float radius_sq = radius * radius;
             const float dist_sq   = dx * dx + dy * dy + dz * dz;
-            if (dist_sq <= radius_sq) {
-                u[index_3d(i, j, k, nx + 1, ny)] += amount * fmaxf(0.0f, 1.0f - dist_sq / radius_sq);
-            }
+            if (dist_sq <= radius_sq) u[index_3d(i, j, k, nx + 1, ny)] += amount * fmaxf(0.0f, 1.0f - dist_sq / radius_sq);
         }
 
         __global__ void add_source_v_kernel(float* v, int nx, int ny, int nz, float cx, float cy, float cz, float radius, float amount) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i >= nx || j > ny || k >= nz) {
-                return;
-            }
+            if (i >= nx || j > ny || k >= nz) return;
             const float dx        = (static_cast<float>(i) + 0.5f) - cx;
             const float dy        = static_cast<float>(j) - cy;
             const float dz        = (static_cast<float>(k) + 0.5f) - cz;
             const float radius_sq = radius * radius;
             const float dist_sq   = dx * dx + dy * dy + dz * dz;
-            if (dist_sq <= radius_sq) {
-                v[index_3d(i, j, k, nx, ny + 1)] += amount * fmaxf(0.0f, 1.0f - dist_sq / radius_sq);
-            }
+            if (dist_sq <= radius_sq) v[index_3d(i, j, k, nx, ny + 1)] += amount * fmaxf(0.0f, 1.0f - dist_sq / radius_sq);
         }
 
         __global__ void add_source_w_kernel(float* w, int nx, int ny, int nz, float cx, float cy, float cz, float radius, float amount) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i >= nx || j >= ny || k > nz) {
-                return;
-            }
+            if (i >= nx || j >= ny || k > nz) return;
             const float dx        = (static_cast<float>(i) + 0.5f) - cx;
             const float dy        = (static_cast<float>(j) + 0.5f) - cy;
             const float dz        = static_cast<float>(k) - cz;
             const float radius_sq = radius * radius;
             const float dist_sq   = dx * dx + dy * dy + dz * dz;
-            if (dist_sq <= radius_sq) {
-                w[index_3d(i, j, k, nx, ny)] += amount * fmaxf(0.0f, 1.0f - dist_sq / radius_sq);
-            }
+            if (dist_sq <= radius_sq) w[index_3d(i, j, k, nx, ny)] += amount * fmaxf(0.0f, 1.0f - dist_sq / radius_sq);
         }
 
         __global__ void set_u_boundary_kernel(float* u, int nx, int ny, int nz) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i <= nx && j < ny && k < nz && (i == 0 || i == nx)) {
-                u[index_3d(i, j, k, nx + 1, ny)] = 0.0f;
-            }
+            if (i <= nx && j < ny && k < nz && (i == 0 || i == nx)) u[index_3d(i, j, k, nx + 1, ny)] = 0.0f;
         }
 
         __global__ void set_v_boundary_kernel(float* v, int nx, int ny, int nz) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i < nx && j <= ny && k < nz && (j == 0 || j == ny)) {
-                v[index_3d(i, j, k, nx, ny + 1)] = 0.0f;
-            }
+            if (i < nx && j <= ny && k < nz && (j == 0 || j == ny)) v[index_3d(i, j, k, nx, ny + 1)] = 0.0f;
         }
 
         __global__ void set_w_boundary_kernel(float* w, int nx, int ny, int nz) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i < nx && j < ny && k <= nz && (k == 0 || k == nz)) {
-                w[index_3d(i, j, k, nx, ny)] = 0.0f;
-            }
+            if (i < nx && j < ny && k <= nz && (k == 0 || k == nz)) w[index_3d(i, j, k, nx, ny)] = 0.0f;
         }
 
         __global__ void compute_vorticity_kernel(const float* u, const float* v, const float* w, float* omega_x, float* omega_y, float* omega_z, float* omega_mag, int nx, int ny, int nz, float h) {
@@ -307,9 +291,7 @@ namespace visual_smoke {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i > 0 && i < nx && j < ny && k < nz) {
-                u[index_3d(i, j, k, nx + 1, ny)] += 0.5f * dt * (force_x[index_3d(i - 1, j, k, nx, ny)] + force_x[index_3d(i, j, k, nx, ny)]);
-            }
+            if (i > 0 && i < nx && j < ny && k < nz) u[index_3d(i, j, k, nx + 1, ny)] += 0.5f * dt * (force_x[index_3d(i - 1, j, k, nx, ny)] + force_x[index_3d(i, j, k, nx, ny)]);
         }
 
         __global__ void apply_v_forces_kernel(float* v, const float* density, const float* temperature, const float* force_y, int nx, int ny, int nz, float ambient_temperature, float density_buoyancy, float temperature_buoyancy, float dt) {
@@ -339,33 +321,30 @@ namespace visual_smoke {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i <= nx && j < ny && k < nz) {
-                const float3 pos                   = make_float3(static_cast<float>(i) * h, (static_cast<float>(j) + 0.5f) * h, (static_cast<float>(k) + 0.5f) * h);
-                const float3 vel                   = sample_velocity(src_u, src_v, src_w, pos, nx, ny, nz, h, cubic);
-                dst[index_3d(i, j, k, nx + 1, ny)] = sample_u(src_u, clamp_domain(make_float3(pos.x - dt * vel.x, pos.y - dt * vel.y, pos.z - dt * vel.z), nx, ny, nz, h), nx, ny, nz, h, cubic);
-            }
+            if (i > nx || j >= ny || k >= nz) return;
+            const float3 pos                    = make_float3(static_cast<float>(i) * h, (static_cast<float>(j) + 0.5f) * h, (static_cast<float>(k) + 0.5f) * h);
+            const float3 vel                    = sample_velocity(src_u, src_v, src_w, pos, nx, ny, nz, h, cubic);
+            dst[index_3d(i, j, k, nx + 1, ny)] = sample_u(src_u, clamp_domain(make_float3(pos.x - dt * vel.x, pos.y - dt * vel.y, pos.z - dt * vel.z), nx, ny, nz, h), nx, ny, nz, h, cubic);
         }
 
         __global__ void advect_v_kernel(float* dst, const float* src_u, const float* src_v, const float* src_w, int nx, int ny, int nz, float h, float dt, bool cubic) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i < nx && j <= ny && k < nz) {
-                const float3 pos                   = make_float3((static_cast<float>(i) + 0.5f) * h, static_cast<float>(j) * h, (static_cast<float>(k) + 0.5f) * h);
-                const float3 vel                   = sample_velocity(src_u, src_v, src_w, pos, nx, ny, nz, h, cubic);
-                dst[index_3d(i, j, k, nx, ny + 1)] = sample_v(src_v, clamp_domain(make_float3(pos.x - dt * vel.x, pos.y - dt * vel.y, pos.z - dt * vel.z), nx, ny, nz, h), nx, ny, nz, h, cubic);
-            }
+            if (i >= nx || j > ny || k >= nz) return;
+            const float3 pos                    = make_float3((static_cast<float>(i) + 0.5f) * h, static_cast<float>(j) * h, (static_cast<float>(k) + 0.5f) * h);
+            const float3 vel                    = sample_velocity(src_u, src_v, src_w, pos, nx, ny, nz, h, cubic);
+            dst[index_3d(i, j, k, nx, ny + 1)] = sample_v(src_v, clamp_domain(make_float3(pos.x - dt * vel.x, pos.y - dt * vel.y, pos.z - dt * vel.z), nx, ny, nz, h), nx, ny, nz, h, cubic);
         }
 
         __global__ void advect_w_kernel(float* dst, const float* src_u, const float* src_v, const float* src_w, int nx, int ny, int nz, float h, float dt, bool cubic) {
             const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
             const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-            if (i < nx && j < ny && k <= nz) {
-                const float3 pos               = make_float3((static_cast<float>(i) + 0.5f) * h, (static_cast<float>(j) + 0.5f) * h, static_cast<float>(k) * h);
-                const float3 vel               = sample_velocity(src_u, src_v, src_w, pos, nx, ny, nz, h, cubic);
-                dst[index_3d(i, j, k, nx, ny)] = sample_w(src_w, clamp_domain(make_float3(pos.x - dt * vel.x, pos.y - dt * vel.y, pos.z - dt * vel.z), nx, ny, nz, h), nx, ny, nz, h, cubic);
-            }
+            if (i >= nx || j >= ny || k > nz) return;
+            const float3 pos                = make_float3((static_cast<float>(i) + 0.5f) * h, (static_cast<float>(j) + 0.5f) * h, static_cast<float>(k) * h);
+            const float3 vel                = sample_velocity(src_u, src_v, src_w, pos, nx, ny, nz, h, cubic);
+            dst[index_3d(i, j, k, nx, ny)] = sample_w(src_w, clamp_domain(make_float3(pos.x - dt * vel.x, pos.y - dt * vel.y, pos.z - dt * vel.z), nx, ny, nz, h), nx, ny, nz, h, cubic);
         }
 
         __global__ void compute_divergence_kernel(float* divergence, const float* u, const float* v, const float* w, int nx, int ny, int nz, float h) {
