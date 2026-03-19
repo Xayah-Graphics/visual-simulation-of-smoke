@@ -468,6 +468,20 @@ namespace visual_smoke {
             }
         }
 
+        __global__ void snapshot_velocity_magnitude_kernel(float* dst, const float* u, const float* v, const float* w, int nx, int ny, int nz) {
+            const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+            const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+            const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+            if (i >= nx || j >= ny || k >= nz) {
+                return;
+            }
+
+            const float ux = center_u(u, i, j, k, nx, ny, nz);
+            const float vy = center_v(v, i, j, k, nx, ny, nz);
+            const float wz = center_w(w, i, j, k, nx, ny, nz);
+            dst[index_3d(i, j, k, nx, ny)] = sqrtf(ux * ux + vy * vy + wz * wz);
+        }
+
     } // namespace
 
     class Solver {
@@ -485,6 +499,7 @@ namespace visual_smoke {
         void step(Stream stream);
         void snapshot_density(const BufferView& destination, Stream stream);
         void snapshot_temperature(const BufferView& destination, Stream stream);
+        void snapshot_velocity_magnitude(const BufferView& destination, Stream stream);
 
     private:
         void validate_snapshot_(const BufferView& destination, const char* name) const;
@@ -711,6 +726,14 @@ namespace visual_smoke {
         check_cuda(cudaMemcpyAsync(destination.data, temperature_, cell_bytes_, cudaMemcpyDeviceToDevice, stream), "cudaMemcpyAsync temperature snapshot");
     }
 
+    void Solver::snapshot_velocity_magnitude(const BufferView& destination, Stream stream) {
+        nvtx3::scoped_range range{"vsmoke.snapshot_velocity_magnitude"};
+        validate_snapshot_(destination, "snapshot velocity magnitude destination");
+        const dim3 block = make_block(desc_);
+        snapshot_velocity_magnitude_kernel<<<make_grid(desc_.nx, desc_.ny, desc_.nz, block), block, 0, stream>>>(reinterpret_cast<float*>(destination.data), u_, v_, w_, desc_.nx, desc_.ny, desc_.nz);
+        check_cuda(cudaGetLastError(), "snapshot_velocity_magnitude_kernel");
+    }
+
 } // namespace visual_smoke
 
 struct VisualSimulationOfSmokeContext {
@@ -859,6 +882,13 @@ int32_t visual_simulation_of_smoke_snapshot_temperature_async(VisualSimulationOf
         return store_error(context, VISUAL_SIMULATION_OF_SMOKE_ERROR_INVALID_ARGUMENT, "visual_simulation_of_smoke_snapshot_temperature_async received a null argument");
     }
     return smoke_try(context, [&] { context->solver->snapshot_temperature(destination, to_stream(cuda_stream)); });
+}
+
+int32_t visual_simulation_of_smoke_snapshot_velocity_magnitude_async(VisualSimulationOfSmokeContext* context, VisualSimulationOfSmokeBufferView destination, void* cuda_stream) {
+    if (context == nullptr || context->solver == nullptr) {
+        return store_error(context, VISUAL_SIMULATION_OF_SMOKE_ERROR_INVALID_ARGUMENT, "visual_simulation_of_smoke_snapshot_velocity_magnitude_async received a null argument");
+    }
+    return smoke_try(context, [&] { context->solver->snapshot_velocity_magnitude(destination, to_stream(cuda_stream)); });
 }
 
 uint64_t visual_simulation_of_smoke_last_error_length(void) {
