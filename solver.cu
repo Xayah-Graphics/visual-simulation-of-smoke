@@ -12,26 +12,6 @@
 #include <utility>
 
 namespace visual_smoke {
-    struct FieldGridDesc {
-        int32_t nx;
-        int32_t ny;
-        int32_t nz;
-        float cell_size;
-    };
-
-    struct StepParams {
-        float dt;
-        float ambient_temperature;
-        float density_buoyancy;
-        float temperature_buoyancy;
-        float vorticity_epsilon;
-        int32_t pressure_iterations;
-        int32_t block_x;
-        int32_t block_y;
-        int32_t block_z;
-        uint32_t use_monotonic_cubic;
-    };
-
     using Stream = cudaStream_t;
 
     thread_local std::string g_last_error{};
@@ -66,13 +46,6 @@ namespace visual_smoke {
                  + velocity_x_bytes(nx, ny, nz)
                  + velocity_y_bytes(nx, ny, nz)
                  + velocity_z_bytes(nx, ny, nz);
-        }
-
-        inline dim3 make_block(const StepParams& desc) {
-            return dim3(
-                static_cast<unsigned>(std::max(desc.block_x, 1)),
-                static_cast<unsigned>(std::max(desc.block_y, 1)),
-                static_cast<unsigned>(std::max(desc.block_z, 1)));
         }
 
         inline dim3 make_grid(int nx, int ny, int nz, const dim3& block) {
@@ -621,19 +594,21 @@ int32_t visual_simulation_of_smoke_clear_async(
         const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
         const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
         const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-        const auto validate = [&](void* data, const std::uint64_t size_bytes, const std::uint64_t required, const char* name) {
-            if (data == nullptr) {
-                throw std::invalid_argument(std::string(name) + " must provide a non-null device pointer");
-            }
-            if (size_bytes < required) {
-                throw std::invalid_argument(std::string(name) + " size_bytes is too small");
-            }
-        };
-        validate(density, density_bytes, cell_bytes, "density");
-        validate(temperature, temperature_bytes, cell_bytes, "temperature");
-        validate(velocity_x, velocity_x_bytes, u_bytes, "velocity_x");
-        validate(velocity_y, velocity_y_bytes, v_bytes, "velocity_y");
-        validate(velocity_z, velocity_z_bytes, w_bytes, "velocity_z");
+        if (density == nullptr || density_bytes < cell_bytes) {
+            throw std::invalid_argument("density is invalid");
+        }
+        if (temperature == nullptr || temperature_bytes < cell_bytes) {
+            throw std::invalid_argument("temperature is invalid");
+        }
+        if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+            throw std::invalid_argument("velocity_x is invalid");
+        }
+        if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+            throw std::invalid_argument("velocity_y is invalid");
+        }
+        if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+            throw std::invalid_argument("velocity_z is invalid");
+        }
 
         nvtx3::scoped_range range{"vsmoke.clear"};
         check_cuda(cudaMemsetAsync(density, 0, cell_bytes, to_stream(cuda_stream)), "cudaMemsetAsync density");
@@ -687,23 +662,27 @@ int32_t visual_simulation_of_smoke_add_source_async(
         const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
         const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
         const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-        const auto validate = [&](void* data, const std::uint64_t size_bytes, const std::uint64_t required, const char* name) {
-            if (data == nullptr) {
-                throw std::invalid_argument(std::string(name) + " must provide a non-null device pointer");
-            }
-            if (size_bytes < required) {
-                throw std::invalid_argument(std::string(name) + " size_bytes is too small");
-            }
-        };
-        validate(density, density_bytes, cell_bytes, "density");
-        validate(temperature, temperature_bytes, cell_bytes, "temperature");
-        validate(velocity_x, velocity_x_bytes, u_bytes, "velocity_x");
-        validate(velocity_y, velocity_y_bytes, v_bytes, "velocity_y");
-        validate(velocity_z, velocity_z_bytes, w_bytes, "velocity_z");
+        if (density == nullptr || density_bytes < cell_bytes) {
+            throw std::invalid_argument("density is invalid");
+        }
+        if (temperature == nullptr || temperature_bytes < cell_bytes) {
+            throw std::invalid_argument("temperature is invalid");
+        }
+        if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+            throw std::invalid_argument("velocity_x is invalid");
+        }
+        if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+            throw std::invalid_argument("velocity_y is invalid");
+        }
+        if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+            throw std::invalid_argument("velocity_z is invalid");
+        }
 
         nvtx3::scoped_range range{"vsmoke.add_source"};
-        const auto params = visual_smoke::StepParams{1.0f / 90.0f, 0.0f, 0.045f, 0.12f, 2.0f, 80, block_x, block_y, block_z, 1u};
-        const dim3 block = make_block(params);
+        const dim3 block{
+            static_cast<unsigned>(std::max(block_x, 1)),
+            static_cast<unsigned>(std::max(block_y, 1)),
+            static_cast<unsigned>(std::max(block_z, 1))};
         add_source_cells_kernel<<<make_grid(nx, ny, nz, block), block, 0, to_stream(cuda_stream)>>>(
             reinterpret_cast<float*>(density),
             reinterpret_cast<float*>(temperature),
@@ -762,96 +741,91 @@ int32_t visual_simulation_of_smoke_step_async(
         if (cell_size <= 0.0f) {
             throw std::invalid_argument("cell_size must be positive");
         }
-        const auto params = visual_smoke::StepParams{dt, ambient_temperature, density_buoyancy, temperature_buoyancy, vorticity_epsilon, pressure_iterations, block_x, block_y, block_z, use_monotonic_cubic};
-        if (params.dt <= 0.0f || params.pressure_iterations <= 0) {
+        if (dt <= 0.0f || pressure_iterations <= 0) {
             throw std::invalid_argument("step params are invalid");
         }
         const auto cell_bytes = visual_smoke::scalar_bytes(nx, ny, nz);
         const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
         const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
         const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-        const auto required_workspace = visual_smoke::workspace_bytes(nx, ny, nz);
-        const auto validate = [&](void* data, const std::uint64_t size_bytes, const std::uint64_t required, const char* name) {
-            if (data == nullptr) {
-                throw std::invalid_argument(std::string(name) + " must provide a non-null device pointer");
-            }
-            if (size_bytes < required) {
-                throw std::invalid_argument(std::string(name) + " size_bytes is too small");
-            }
-        };
-        validate(density, density_bytes, cell_bytes, "density");
-        validate(temperature, temperature_bytes, cell_bytes, "temperature");
-        validate(velocity_x, velocity_x_bytes, u_bytes, "velocity_x");
-        validate(velocity_y, velocity_y_bytes, v_bytes, "velocity_y");
-        validate(velocity_z, velocity_z_bytes, w_bytes, "velocity_z");
-        if (workspace == nullptr || workspace_bytes < required_workspace) {
+        if (density == nullptr || density_bytes < cell_bytes) {
+            throw std::invalid_argument("density is invalid");
+        }
+        if (temperature == nullptr || temperature_bytes < cell_bytes) {
+            throw std::invalid_argument("temperature is invalid");
+        }
+        if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+            throw std::invalid_argument("velocity_x is invalid");
+        }
+        if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+            throw std::invalid_argument("velocity_y is invalid");
+        }
+        if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+            throw std::invalid_argument("velocity_z is invalid");
+        }
+        if (workspace == nullptr || workspace_bytes < visual_smoke::workspace_bytes(nx, ny, nz)) {
             throw std::invalid_argument("workspace is invalid");
         }
 
         auto* cursor = reinterpret_cast<std::byte*>(workspace);
-        auto slice_scalar = [&]() {
-            auto* field = reinterpret_cast<float*>(cursor);
-            cursor += cell_bytes;
-            return field;
-        };
-        auto slice_u = [&]() {
-            auto* field = reinterpret_cast<float*>(cursor);
-            cursor += u_bytes;
-            return field;
-        };
-        auto slice_v = [&]() {
-            auto* field = reinterpret_cast<float*>(cursor);
-            cursor += v_bytes;
-            return field;
-        };
-        auto slice_w = [&]() {
-            auto* field = reinterpret_cast<float*>(cursor);
-            cursor += w_bytes;
-            return field;
-        };
-
-        auto* density_prev = slice_scalar();
-        auto* temperature_prev = slice_scalar();
-        auto* u_prev = slice_u();
-        auto* v_prev = slice_v();
-        auto* w_prev = slice_w();
-        auto* pressure = slice_scalar();
-        auto* divergence = slice_scalar();
-        auto* omega_x = slice_scalar();
-        auto* omega_y = slice_scalar();
-        auto* omega_z = slice_scalar();
-        auto* omega_mag = slice_scalar();
-        auto* force_x = slice_scalar();
-        auto* force_y = slice_scalar();
-        auto* force_z = slice_scalar();
+        auto* density_prev = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* temperature_prev = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* u_prev = reinterpret_cast<float*>(cursor);
+        cursor += u_bytes;
+        auto* v_prev = reinterpret_cast<float*>(cursor);
+        cursor += v_bytes;
+        auto* w_prev = reinterpret_cast<float*>(cursor);
+        cursor += w_bytes;
+        auto* pressure = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* divergence = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* omega_x = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* omega_y = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* omega_z = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* omega_mag = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* force_x = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* force_y = reinterpret_cast<float*>(cursor);
+        cursor += cell_bytes;
+        auto* force_z = reinterpret_cast<float*>(cursor);
         auto* density_f = reinterpret_cast<float*>(density);
         auto* temperature_f = reinterpret_cast<float*>(temperature);
         auto* u = reinterpret_cast<float*>(velocity_x);
         auto* v = reinterpret_cast<float*>(velocity_y);
         auto* w = reinterpret_cast<float*>(velocity_z);
-        const dim3 block = make_block(params);
+        const dim3 block{
+            static_cast<unsigned>(std::max(block_x, 1)),
+            static_cast<unsigned>(std::max(block_y, 1)),
+            static_cast<unsigned>(std::max(block_z, 1))};
         const dim3 cells = make_grid(nx, ny, nz, block);
         const dim3 u_grid = make_grid(nx + 1, ny, nz, block);
         const dim3 v_grid = make_grid(nx, ny + 1, nz, block);
         const dim3 w_grid = make_grid(nx, ny, nz + 1, block);
-        const bool cubic = params.use_monotonic_cubic != 0u;
+        const bool cubic = use_monotonic_cubic != 0u;
         const auto stream = to_stream(cuda_stream);
 
         nvtx3::scoped_range step_range{"vsmoke.step"};
         {
             nvtx3::scoped_range range{"vsmoke.step.forces"};
             compute_vorticity_kernel<<<cells, block, 0, stream>>>(u, v, w, omega_x, omega_y, omega_z, omega_mag, nx, ny, nz, cell_size);
-            compute_confinement_kernel<<<cells, block, 0, stream>>>(omega_x, omega_y, omega_z, omega_mag, force_x, force_y, force_z, nx, ny, nz, params.vorticity_epsilon, cell_size);
-            apply_u_forces_kernel<<<u_grid, block, 0, stream>>>(u, force_x, nx, ny, nz, params.dt);
-            apply_v_forces_kernel<<<v_grid, block, 0, stream>>>(v, density_f, temperature_f, force_y, nx, ny, nz, params.ambient_temperature, params.density_buoyancy, params.temperature_buoyancy, params.dt);
-            apply_w_forces_kernel<<<w_grid, block, 0, stream>>>(w, force_z, nx, ny, nz, params.dt);
+            compute_confinement_kernel<<<cells, block, 0, stream>>>(omega_x, omega_y, omega_z, omega_mag, force_x, force_y, force_z, nx, ny, nz, vorticity_epsilon, cell_size);
+            apply_u_forces_kernel<<<u_grid, block, 0, stream>>>(u, force_x, nx, ny, nz, dt);
+            apply_v_forces_kernel<<<v_grid, block, 0, stream>>>(v, density_f, temperature_f, force_y, nx, ny, nz, ambient_temperature, density_buoyancy, temperature_buoyancy, dt);
+            apply_w_forces_kernel<<<w_grid, block, 0, stream>>>(w, force_z, nx, ny, nz, dt);
             check_cuda(cudaGetLastError(), "force kernels");
         }
         {
             nvtx3::scoped_range range{"vsmoke.step.advect_velocity"};
-            advect_u_kernel<<<u_grid, block, 0, stream>>>(u_prev, u, v, w, nx, ny, nz, cell_size, params.dt, cubic);
-            advect_v_kernel<<<v_grid, block, 0, stream>>>(v_prev, u, v, w, nx, ny, nz, cell_size, params.dt, cubic);
-            advect_w_kernel<<<w_grid, block, 0, stream>>>(w_prev, u, v, w, nx, ny, nz, cell_size, params.dt, cubic);
+            advect_u_kernel<<<u_grid, block, 0, stream>>>(u_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic);
+            advect_v_kernel<<<v_grid, block, 0, stream>>>(v_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic);
+            advect_w_kernel<<<w_grid, block, 0, stream>>>(w_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic);
             set_u_boundary_kernel<<<u_grid, block, 0, stream>>>(u_prev, nx, ny, nz);
             set_v_boundary_kernel<<<v_grid, block, 0, stream>>>(v_prev, nx, ny, nz);
             set_w_boundary_kernel<<<w_grid, block, 0, stream>>>(w_prev, nx, ny, nz);
@@ -861,13 +835,13 @@ int32_t visual_simulation_of_smoke_step_async(
             nvtx3::scoped_range range{"vsmoke.step.project"};
             check_cuda(cudaMemsetAsync(pressure, 0, cell_bytes, stream), "cudaMemsetAsync pressure");
             compute_divergence_kernel<<<cells, block, 0, stream>>>(divergence, u_prev, v_prev, w_prev, nx, ny, nz, cell_size);
-            for (int iteration = 0; iteration < params.pressure_iterations; ++iteration) {
-                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure, divergence, nx, ny, nz, cell_size, params.dt, 0);
-                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure, divergence, nx, ny, nz, cell_size, params.dt, 1);
+            for (int iteration = 0; iteration < pressure_iterations; ++iteration) {
+                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure, divergence, nx, ny, nz, cell_size, dt, 0);
+                pressure_rbgs_kernel<<<cells, block, 0, stream>>>(pressure, divergence, nx, ny, nz, cell_size, dt, 1);
             }
-            subtract_gradient_u_kernel<<<u_grid, block, 0, stream>>>(u_prev, pressure, nx, ny, nz, cell_size, params.dt);
-            subtract_gradient_v_kernel<<<v_grid, block, 0, stream>>>(v_prev, pressure, nx, ny, nz, cell_size, params.dt);
-            subtract_gradient_w_kernel<<<w_grid, block, 0, stream>>>(w_prev, pressure, nx, ny, nz, cell_size, params.dt);
+            subtract_gradient_u_kernel<<<u_grid, block, 0, stream>>>(u_prev, pressure, nx, ny, nz, cell_size, dt);
+            subtract_gradient_v_kernel<<<v_grid, block, 0, stream>>>(v_prev, pressure, nx, ny, nz, cell_size, dt);
+            subtract_gradient_w_kernel<<<w_grid, block, 0, stream>>>(w_prev, pressure, nx, ny, nz, cell_size, dt);
             set_u_boundary_kernel<<<u_grid, block, 0, stream>>>(u_prev, nx, ny, nz);
             set_v_boundary_kernel<<<v_grid, block, 0, stream>>>(v_prev, nx, ny, nz);
             set_w_boundary_kernel<<<w_grid, block, 0, stream>>>(w_prev, nx, ny, nz);
@@ -880,8 +854,8 @@ int32_t visual_simulation_of_smoke_step_async(
         check_cuda(cudaMemcpyAsync(temperature_prev, temperature_f, cell_bytes, cudaMemcpyDeviceToDevice, stream), "cudaMemcpyAsync temperature_prev");
         {
             nvtx3::scoped_range range{"vsmoke.step.advect_scalars"};
-            advect_scalar_kernel<<<cells, block, 0, stream>>>(density_f, density_prev, u, v, w, nx, ny, nz, cell_size, params.dt, cubic, true);
-            advect_scalar_kernel<<<cells, block, 0, stream>>>(temperature_f, temperature_prev, u, v, w, nx, ny, nz, cell_size, params.dt, cubic, false);
+            advect_scalar_kernel<<<cells, block, 0, stream>>>(density_f, density_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic, true);
+            advect_scalar_kernel<<<cells, block, 0, stream>>>(temperature_f, temperature_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic, false);
             check_cuda(cudaGetLastError(), "advect scalar kernels");
         }
     });
@@ -916,22 +890,24 @@ int32_t visual_simulation_of_smoke_compute_velocity_magnitude_async(
         const auto u_bytes = visual_smoke::velocity_x_bytes(nx, ny, nz);
         const auto v_bytes = visual_smoke::velocity_y_bytes(nx, ny, nz);
         const auto w_bytes = visual_smoke::velocity_z_bytes(nx, ny, nz);
-        const auto validate = [&](void* data, const std::uint64_t size_bytes, const std::uint64_t required, const char* name) {
-            if (data == nullptr) {
-                throw std::invalid_argument(std::string(name) + " must provide a non-null device pointer");
-            }
-            if (size_bytes < required) {
-                throw std::invalid_argument(std::string(name) + " size_bytes is too small");
-            }
-        };
-        validate(velocity_x, velocity_x_bytes, u_bytes, "velocity_x");
-        validate(velocity_y, velocity_y_bytes, v_bytes, "velocity_y");
-        validate(velocity_z, velocity_z_bytes, w_bytes, "velocity_z");
-        validate(destination, destination_bytes, cell_bytes, "destination");
+        if (velocity_x == nullptr || velocity_x_bytes < u_bytes) {
+            throw std::invalid_argument("velocity_x is invalid");
+        }
+        if (velocity_y == nullptr || velocity_y_bytes < v_bytes) {
+            throw std::invalid_argument("velocity_y is invalid");
+        }
+        if (velocity_z == nullptr || velocity_z_bytes < w_bytes) {
+            throw std::invalid_argument("velocity_z is invalid");
+        }
+        if (destination == nullptr || destination_bytes < cell_bytes) {
+            throw std::invalid_argument("destination is invalid");
+        }
 
         nvtx3::scoped_range range{"vsmoke.snapshot_velocity_magnitude"};
-        const auto params = visual_smoke::StepParams{1.0f / 90.0f, 0.0f, 0.045f, 0.12f, 2.0f, 80, block_x, block_y, block_z, 1u};
-        const dim3 block = make_block(params);
+        const dim3 block{
+            static_cast<unsigned>(std::max(block_x, 1)),
+            static_cast<unsigned>(std::max(block_y, 1)),
+            static_cast<unsigned>(std::max(block_z, 1))};
         snapshot_velocity_magnitude_kernel<<<make_grid(nx, ny, nz, block), block, 0, to_stream(cuda_stream)>>>(
             reinterpret_cast<float*>(destination),
             reinterpret_cast<const float*>(velocity_x),
