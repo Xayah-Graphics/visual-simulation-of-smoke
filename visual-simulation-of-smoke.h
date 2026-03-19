@@ -1,4 +1,5 @@
-#pragma once
+#ifndef VISUAL_SIMULATION_OF_SMOKE_H
+#define VISUAL_SIMULATION_OF_SMOKE_H
 
 #include <stdint.h>
 
@@ -86,3 +87,5 @@ VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_copy_context_l
 #ifdef __cplusplus
 }
 #endif
+
+#endif // VISUAL_SIMULATION_OF_SMOKE_H
