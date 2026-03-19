@@ -33,8 +33,7 @@ add_library(
 
 add_executable(
         visual-simulation-of-smoke-app
-        main.cpp
-        demo_ops.cu
+        main.cu
 )
 
 target_compile_definitions(visual-simulation-of-smoke PRIVATE VISUAL_SIMULATION_OF_SMOKE_BUILD_SHARED)
