@@ -375,14 +375,6 @@ namespace visual_smoke {
 
 } // namespace visual_smoke
 
-namespace {
-
-    [[nodiscard]] visual_smoke::Stream to_stream(void* cuda_stream) noexcept {
-        return reinterpret_cast<visual_smoke::Stream>(cuda_stream);
-    }
-
-} // namespace
-
 extern "C" {
 
 int32_t visual_simulation_of_smoke_validate_desc(const VisualSimulationOfSmokeStepDesc* desc) {
@@ -460,7 +452,7 @@ int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDe
     const dim3 v_grid = make_grid(nx, ny + 1, nz, block);
     const dim3 w_grid = make_grid(nx, ny, nz + 1, block);
     const bool cubic  = use_monotonic_cubic != 0u;
-    const auto stream = to_stream(desc->stream);
+    const auto stream = reinterpret_cast<visual_smoke::Stream>(desc->stream);
 
     nvtx3::scoped_range step_range{"vsmoke.step"};
     {
