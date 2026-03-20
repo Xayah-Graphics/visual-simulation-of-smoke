@@ -48,9 +48,6 @@ Error code scheme:
 2018  : invalid temporary force_x buffer
 2019  : invalid temporary force_y buffer
 2020  : invalid temporary force_z buffer
-3xxx  : backend binding errors
-3002  : CPU backend requires stream == nullptr
-3003  : CUDA backend requires stream != nullptr
 5xxx  : CUDA runtime or kernel launch failure
 5001  : CUDA call failed
 */
@@ -94,6 +91,7 @@ typedef struct VisualSimulationOfSmokeStepDesc {
     void* stream;
 } VisualSimulationOfSmokeStepDesc;
 
+VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_validate_desc(const VisualSimulationOfSmokeStepDesc* desc);
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDesc* desc);
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_step_cpu(const VisualSimulationOfSmokeStepDesc* desc);
 VISUAL_SIMULATION_OF_SMOKE_API int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeStepDesc* desc);

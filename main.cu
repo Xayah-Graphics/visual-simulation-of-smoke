@@ -260,6 +260,7 @@ int main() {
         cpu_desc.block_y                        = block_y;
         cpu_desc.block_z                        = block_z;
         cpu_desc.stream                         = nullptr;
+        if (!smoke_ok(visual_simulation_of_smoke_validate_desc(&cpu_desc), "visual_simulation_of_smoke_validate_desc")) return EXIT_FAILURE;
         if (!smoke_ok(visual_simulation_of_smoke_step_cpu(&cpu_desc), "visual_simulation_of_smoke_step_cpu")) return EXIT_FAILURE;
     }
     const auto cpu_end = std::chrono::steady_clock::now();
@@ -308,6 +309,7 @@ int main() {
         parallel_desc.block_y                        = block_y;
         parallel_desc.block_z                        = block_z;
         parallel_desc.stream                         = nullptr;
+        if (!smoke_ok(visual_simulation_of_smoke_validate_desc(&parallel_desc), "visual_simulation_of_smoke_validate_desc")) return EXIT_FAILURE;
         if (!smoke_ok(visual_simulation_of_smoke_step_parallel(&parallel_desc), "visual_simulation_of_smoke_step_parallel")) return EXIT_FAILURE;
     }
     const auto parallel_end = std::chrono::steady_clock::now();
@@ -410,6 +412,7 @@ int main() {
         cuda_desc.block_y                        = block_y;
         cuda_desc.block_z                        = block_z;
         cuda_desc.stream                         = stream;
+        if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_validate_desc(&cuda_desc), "visual_simulation_of_smoke_validate_desc")) exit_code = EXIT_FAILURE;
         if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_step_cuda(&cuda_desc), "visual_simulation_of_smoke_step_cuda")) exit_code = EXIT_FAILURE;
     }
     if (exit_code == EXIT_SUCCESS && !cuda_ok(cudaStreamSynchronize(stream), "cudaStreamSynchronize")) exit_code = EXIT_FAILURE;

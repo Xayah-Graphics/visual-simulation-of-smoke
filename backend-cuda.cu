@@ -385,33 +385,13 @@ namespace {
 
 extern "C" {
 
-int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDesc* desc) {
-    using namespace visual_smoke;
+int32_t visual_simulation_of_smoke_validate_desc(const VisualSimulationOfSmokeStepDesc* desc) {
     if (desc == nullptr) return 1000;
     if (desc->struct_size < sizeof(VisualSimulationOfSmokeStepDesc)) return 1000;
-    if (desc->stream == nullptr) return 3003;
-    const int32_t nx = desc->nx;
-    const int32_t ny = desc->ny;
-    const int32_t nz = desc->nz;
-    const float cell_size = desc->cell_size;
-    const float dt = desc->dt;
-    const float ambient_temperature = desc->ambient_temperature;
-    const float density_buoyancy = desc->density_buoyancy;
-    const float temperature_buoyancy = desc->temperature_buoyancy;
-    const float vorticity_epsilon = desc->vorticity_epsilon;
-    const int32_t pressure_iterations = desc->pressure_iterations;
-    const int32_t block_x = desc->block_x;
-    const int32_t block_y = desc->block_y;
-    const int32_t block_z = desc->block_z;
-    const uint32_t use_monotonic_cubic = desc->use_monotonic_cubic;
-    if (nx <= 0 || ny <= 0 || nz <= 0) return 1001;
-    if (cell_size <= 0.0f) return 1002;
-    if (dt <= 0.0f) return 1003;
-    if (pressure_iterations <= 0) return 1004;
-    const auto cell_bytes = visual_smoke::scalar_bytes(nx, ny, nz);
-    const auto u_bytes    = visual_smoke::velocity_x_bytes(nx, ny, nz);
-    const auto v_bytes    = visual_smoke::velocity_y_bytes(nx, ny, nz);
-    const auto w_bytes    = visual_smoke::velocity_z_bytes(nx, ny, nz);
+    if (desc->nx <= 0 || desc->ny <= 0 || desc->nz <= 0) return 1001;
+    if (desc->cell_size <= 0.0f) return 1002;
+    if (desc->dt <= 0.0f) return 1003;
+    if (desc->pressure_iterations <= 0) return 1004;
     if (desc->density == nullptr) return 2001;
     if (desc->temperature == nullptr) return 2002;
     if (desc->velocity_x == nullptr) return 2003;
@@ -431,6 +411,29 @@ int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDe
     if (desc->temporary_force_x == nullptr) return 2018;
     if (desc->temporary_force_y == nullptr) return 2019;
     if (desc->temporary_force_z == nullptr) return 2020;
+    return 0;
+}
+
+int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDesc* desc) {
+    using namespace visual_smoke;
+    const int32_t nx = desc->nx;
+    const int32_t ny = desc->ny;
+    const int32_t nz = desc->nz;
+    const float cell_size = desc->cell_size;
+    const float dt = desc->dt;
+    const float ambient_temperature = desc->ambient_temperature;
+    const float density_buoyancy = desc->density_buoyancy;
+    const float temperature_buoyancy = desc->temperature_buoyancy;
+    const float vorticity_epsilon = desc->vorticity_epsilon;
+    const int32_t pressure_iterations = desc->pressure_iterations;
+    const int32_t block_x = desc->block_x;
+    const int32_t block_y = desc->block_y;
+    const int32_t block_z = desc->block_z;
+    const uint32_t use_monotonic_cubic = desc->use_monotonic_cubic;
+    const auto cell_bytes = visual_smoke::scalar_bytes(nx, ny, nz);
+    const auto u_bytes    = visual_smoke::velocity_x_bytes(nx, ny, nz);
+    const auto v_bytes    = visual_smoke::velocity_y_bytes(nx, ny, nz);
+    const auto w_bytes    = visual_smoke::velocity_z_bytes(nx, ny, nz);
 
     auto* density_prev     = reinterpret_cast<float*>(desc->temporary_previous_density);
     auto* temperature_prev = reinterpret_cast<float*>(desc->temporary_previous_temperature);
