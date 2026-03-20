@@ -35,20 +35,12 @@ namespace visual_smoke {
             return dim3(static_cast<unsigned>((nx + static_cast<int>(block.x) - 1) / static_cast<int>(block.x)), static_cast<unsigned>((ny + static_cast<int>(block.y) - 1) / static_cast<int>(block.y)), static_cast<unsigned>((nz + static_cast<int>(block.z) - 1) / static_cast<int>(block.z)));
         }
 
-        __host__ __device__ inline int clampi(int value, int lo, int hi) {
-            return value < lo ? lo : (value > hi ? hi : value);
-        }
-
-        __host__ __device__ inline float clampf(float value, float lo, float hi) {
-            return value < lo ? lo : (value > hi ? hi : value);
-        }
-
         __host__ __device__ inline std::uint64_t index_3d(int x, int y, int z, int sx, int sy) {
             return static_cast<std::uint64_t>(z) * static_cast<std::uint64_t>(sx) * static_cast<std::uint64_t>(sy) + static_cast<std::uint64_t>(y) * static_cast<std::uint64_t>(sx) + static_cast<std::uint64_t>(x);
         }
 
         __device__ inline float fetch_clamped(const float* field, int x, int y, int z, int sx, int sy, int sz) {
-            return field[index_3d(clampi(x, 0, sx - 1), clampi(y, 0, sy - 1), clampi(z, 0, sz - 1), sx, sy)];
+            return field[index_3d(std::clamp(x, 0, sx - 1), std::clamp(y, 0, sy - 1), std::clamp(z, 0, sz - 1), sx, sy)];
         }
 
         __device__ inline float monotonic_cubic(float p0, float p1, float p2, float p3, float t) {
@@ -56,18 +48,18 @@ namespace visual_smoke {
             const float a1 = p0 - 2.5f * p1 + 2.0f * p2 - 0.5f * p3;
             const float a2 = -0.5f * p0 + 0.5f * p2;
             const float a3 = p1;
-            return clampf(((a0 * t + a1) * t + a2) * t + a3, fminf(p1, p2), fmaxf(p1, p2));
+            return std::clamp(((a0 * t + a1) * t + a2) * t + a3, fminf(p1, p2), fmaxf(p1, p2));
         }
 
         __device__ float sample_grid(const float* field, float gx, float gy, float gz, int sx, int sy, int sz, bool cubic) {
-            gx = clampf(gx, 0.0f, static_cast<float>(sx - 1));
-            gy = clampf(gy, 0.0f, static_cast<float>(sy - 1));
-            gz = clampf(gz, 0.0f, static_cast<float>(sz - 1));
+            gx = std::clamp(gx, 0.0f, static_cast<float>(sx - 1));
+            gy = std::clamp(gy, 0.0f, static_cast<float>(sy - 1));
+            gz = std::clamp(gz, 0.0f, static_cast<float>(sz - 1));
 
             if (!cubic) {
-                const int x0   = clampi(static_cast<int>(floorf(gx)), 0, sx - 1);
-                const int y0   = clampi(static_cast<int>(floorf(gy)), 0, sy - 1);
-                const int z0   = clampi(static_cast<int>(floorf(gz)), 0, sz - 1);
+                const int x0   = std::clamp(static_cast<int>(floorf(gx)), 0, sx - 1);
+                const int y0   = std::clamp(static_cast<int>(floorf(gy)), 0, sy - 1);
+                const int z0   = std::clamp(static_cast<int>(floorf(gz)), 0, sz - 1);
                 const int x1   = min(x0 + 1, sx - 1);
                 const int y1   = min(y0 + 1, sy - 1);
                 const int z1   = min(z0 + 1, sz - 1);
@@ -131,7 +123,7 @@ namespace visual_smoke {
         }
 
         __device__ float3 clamp_domain(float3 pos, int nx, int ny, int nz, float h) {
-            return make_float3(clampf(pos.x, 0.0f, static_cast<float>(nx) * h), clampf(pos.y, 0.0f, static_cast<float>(ny) * h), clampf(pos.z, 0.0f, static_cast<float>(nz) * h));
+            return make_float3(std::clamp(pos.x, 0.0f, static_cast<float>(nx) * h), std::clamp(pos.y, 0.0f, static_cast<float>(ny) * h), std::clamp(pos.z, 0.0f, static_cast<float>(nz) * h));
         }
 
         __device__ float3 sample_velocity(const float* u, const float* v, const float* w, float3 pos, int nx, int ny, int nz, float h, bool cubic) {
@@ -140,23 +132,23 @@ namespace visual_smoke {
         }
 
         __device__ float center_u(const float* u, int i, int j, int k, int nx, int ny, int nz) {
-            const int ci = clampi(i, 0, nx - 1);
-            const int cj = clampi(j, 0, ny - 1);
-            const int ck = clampi(k, 0, nz - 1);
+            const int ci = std::clamp(i, 0, nx - 1);
+            const int cj = std::clamp(j, 0, ny - 1);
+            const int ck = std::clamp(k, 0, nz - 1);
             return 0.5f * (fetch_clamped(u, ci, cj, ck, nx + 1, ny, nz) + fetch_clamped(u, ci + 1, cj, ck, nx + 1, ny, nz));
         }
 
         __device__ float center_v(const float* v, int i, int j, int k, int nx, int ny, int nz) {
-            const int ci = clampi(i, 0, nx - 1);
-            const int cj = clampi(j, 0, ny - 1);
-            const int ck = clampi(k, 0, nz - 1);
+            const int ci = std::clamp(i, 0, nx - 1);
+            const int cj = std::clamp(j, 0, ny - 1);
+            const int ck = std::clamp(k, 0, nz - 1);
             return 0.5f * (fetch_clamped(v, ci, cj, ck, nx, ny + 1, nz) + fetch_clamped(v, ci, cj + 1, ck, nx, ny + 1, nz));
         }
 
         __device__ float center_w(const float* w, int i, int j, int k, int nx, int ny, int nz) {
-            const int ci = clampi(i, 0, nx - 1);
-            const int cj = clampi(j, 0, ny - 1);
-            const int ck = clampi(k, 0, nz - 1);
+            const int ci = std::clamp(i, 0, nx - 1);
+            const int cj = std::clamp(j, 0, ny - 1);
+            const int ck = std::clamp(k, 0, nz - 1);
             return 0.5f * (fetch_clamped(w, ci, cj, ck, nx, ny, nz + 1) + fetch_clamped(w, ci, cj, ck + 1, nx, ny, nz + 1));
         }
 

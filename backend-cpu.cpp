@@ -6,20 +6,12 @@
 
 namespace {
 
-int clampi(const int value, const int lo, const int hi) {
-    return value < lo ? lo : (value > hi ? hi : value);
-}
-
-float clampf(const float value, const float lo, const float hi) {
-    return value < lo ? lo : (value > hi ? hi : value);
-}
-
 std::uint64_t index_3d(const int x, const int y, const int z, const int sx, const int sy) {
     return static_cast<std::uint64_t>(z) * static_cast<std::uint64_t>(sx) * static_cast<std::uint64_t>(sy) + static_cast<std::uint64_t>(y) * static_cast<std::uint64_t>(sx) + static_cast<std::uint64_t>(x);
 }
 
 float fetch_clamped(const float* field, const int x, const int y, const int z, const int sx, const int sy, const int sz) {
-    return field[index_3d(clampi(x, 0, sx - 1), clampi(y, 0, sy - 1), clampi(z, 0, sz - 1), sx, sy)];
+    return field[index_3d(std::clamp(x, 0, sx - 1), std::clamp(y, 0, sy - 1), std::clamp(z, 0, sz - 1), sx, sy)];
 }
 
 float monotonic_cubic(const float p0, const float p1, const float p2, const float p3, const float t) {
@@ -27,17 +19,17 @@ float monotonic_cubic(const float p0, const float p1, const float p2, const floa
     const float a1 = p0 - 2.5f * p1 + 2.0f * p2 - 0.5f * p3;
     const float a2 = -0.5f * p0 + 0.5f * p2;
     const float a3 = p1;
-    return clampf(((a0 * t + a1) * t + a2) * t + a3, std::fmin(p1, p2), std::fmax(p1, p2));
+    return std::clamp(((a0 * t + a1) * t + a2) * t + a3, std::fmin(p1, p2), std::fmax(p1, p2));
 }
 
 float sample_grid(const float* field, float gx, float gy, float gz, const int sx, const int sy, const int sz, const bool cubic) {
-    gx = clampf(gx, 0.0f, static_cast<float>(sx - 1));
-    gy = clampf(gy, 0.0f, static_cast<float>(sy - 1));
-    gz = clampf(gz, 0.0f, static_cast<float>(sz - 1));
+    gx = std::clamp(gx, 0.0f, static_cast<float>(sx - 1));
+    gy = std::clamp(gy, 0.0f, static_cast<float>(sy - 1));
+    gz = std::clamp(gz, 0.0f, static_cast<float>(sz - 1));
     if (!cubic) {
-        const int x0 = clampi(static_cast<int>(std::floor(gx)), 0, sx - 1);
-        const int y0 = clampi(static_cast<int>(std::floor(gy)), 0, sy - 1);
-        const int z0 = clampi(static_cast<int>(std::floor(gz)), 0, sz - 1);
+        const int x0 = std::clamp(static_cast<int>(std::floor(gx)), 0, sx - 1);
+        const int y0 = std::clamp(static_cast<int>(std::floor(gy)), 0, sy - 1);
+        const int z0 = std::clamp(static_cast<int>(std::floor(gz)), 0, sz - 1);
         const int x1 = std::min(x0 + 1, sx - 1);
         const int y1 = std::min(y0 + 1, sy - 1);
         const int z1 = std::min(z0 + 1, sz - 1);
@@ -93,9 +85,9 @@ float sample_w(const float* field, const float x, const float y, const float z, 
 }
 
 void clamp_domain(float& x, float& y, float& z, const int nx, const int ny, const int nz, const float h) {
-    x = clampf(x, 0.0f, static_cast<float>(nx) * h);
-    y = clampf(y, 0.0f, static_cast<float>(ny) * h);
-    z = clampf(z, 0.0f, static_cast<float>(nz) * h);
+    x = std::clamp(x, 0.0f, static_cast<float>(nx) * h);
+    y = std::clamp(y, 0.0f, static_cast<float>(ny) * h);
+    z = std::clamp(z, 0.0f, static_cast<float>(nz) * h);
 }
 
 void sample_velocity(const float* u, const float* v, const float* w, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const bool cubic, float& out_x, float& out_y, float& out_z) {
@@ -106,23 +98,23 @@ void sample_velocity(const float* u, const float* v, const float* w, float x, fl
 }
 
 float center_u(const float* u, const int i, const int j, const int k, const int nx, const int ny, const int nz) {
-    const int ci = clampi(i, 0, nx - 1);
-    const int cj = clampi(j, 0, ny - 1);
-    const int ck = clampi(k, 0, nz - 1);
+    const int ci = std::clamp(i, 0, nx - 1);
+    const int cj = std::clamp(j, 0, ny - 1);
+    const int ck = std::clamp(k, 0, nz - 1);
     return 0.5f * (fetch_clamped(u, ci, cj, ck, nx + 1, ny, nz) + fetch_clamped(u, ci + 1, cj, ck, nx + 1, ny, nz));
 }
 
 float center_v(const float* v, const int i, const int j, const int k, const int nx, const int ny, const int nz) {
-    const int ci = clampi(i, 0, nx - 1);
-    const int cj = clampi(j, 0, ny - 1);
-    const int ck = clampi(k, 0, nz - 1);
+    const int ci = std::clamp(i, 0, nx - 1);
+    const int cj = std::clamp(j, 0, ny - 1);
+    const int ck = std::clamp(k, 0, nz - 1);
     return 0.5f * (fetch_clamped(v, ci, cj, ck, nx, ny + 1, nz) + fetch_clamped(v, ci, cj + 1, ck, nx, ny + 1, nz));
 }
 
 float center_w(const float* w, const int i, const int j, const int k, const int nx, const int ny, const int nz) {
-    const int ci = clampi(i, 0, nx - 1);
-    const int cj = clampi(j, 0, ny - 1);
-    const int ck = clampi(k, 0, nz - 1);
+    const int ci = std::clamp(i, 0, nx - 1);
+    const int cj = std::clamp(j, 0, ny - 1);
+    const int ck = std::clamp(k, 0, nz - 1);
     return 0.5f * (fetch_clamped(w, ci, cj, ck, nx, ny, nz + 1) + fetch_clamped(w, ci, cj, ck + 1, nx, ny, nz + 1));
 }
 
