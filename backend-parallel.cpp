@@ -319,6 +319,60 @@ void pressure_rbgs(float* pressure, const float* divergence, const int nx, const
     });
 }
 
+void restrict_poisson_residual(float* coarse_rhs, const float* fine_pressure, const float* fine_rhs, const int fine_nx, const int fine_ny, const int fine_nz, const std::vector<int>& coarse_slices) {
+    const int coarse_nx = std::max(1, (fine_nx + 1) / 2);
+    const int coarse_ny = std::max(1, (fine_ny + 1) / 2);
+    std::for_each(std::execution::par_unseq, coarse_slices.begin(), coarse_slices.end(), [&](const int z) {
+        for (int y = 0; y < coarse_ny; ++y)
+            for (int x = 0; x < coarse_nx; ++x) {
+                float residual_sum = 0.0f;
+                int samples = 0;
+                for (int fz = 2 * z; fz < std::min(2 * z + 2, fine_nz); ++fz)
+                    for (int fy = 2 * y; fy < std::min(2 * y + 2, fine_ny); ++fy)
+                        for (int fx = 2 * x; fx < std::min(2 * x + 2, fine_nx); ++fx) {
+                            float neighbors = 0.0f;
+                            int count = 0;
+                            if (fx > 0) {
+                                neighbors += fine_pressure[index_3d(fx - 1, fy, fz, fine_nx, fine_ny)];
+                                ++count;
+                            }
+                            if (fx + 1 < fine_nx) {
+                                neighbors += fine_pressure[index_3d(fx + 1, fy, fz, fine_nx, fine_ny)];
+                                ++count;
+                            }
+                            if (fy > 0) {
+                                neighbors += fine_pressure[index_3d(fx, fy - 1, fz, fine_nx, fine_ny)];
+                                ++count;
+                            }
+                            if (fy + 1 < fine_ny) {
+                                neighbors += fine_pressure[index_3d(fx, fy + 1, fz, fine_nx, fine_ny)];
+                                ++count;
+                            }
+                            if (fz > 0) {
+                                neighbors += fine_pressure[index_3d(fx, fy, fz - 1, fine_nx, fine_ny)];
+                                ++count;
+                            }
+                            if (fz + 1 < fine_nz) {
+                                neighbors += fine_pressure[index_3d(fx, fy, fz + 1, fine_nx, fine_ny)];
+                                ++count;
+                            }
+                            const auto fine_index = index_3d(fx, fy, fz, fine_nx, fine_ny);
+                            residual_sum += fine_rhs[fine_index] - (static_cast<float>(count) * fine_pressure[fine_index] - neighbors);
+                            ++samples;
+                        }
+                coarse_rhs[index_3d(x, y, z, coarse_nx, coarse_ny)] = samples > 0 ? residual_sum / static_cast<float>(samples) : 0.0f;
+            }
+    });
+}
+
+void prolongate_add(float* fine_pressure, const float* coarse_pressure, const int fine_nx, const int fine_ny, const int, const int coarse_nx, const int coarse_ny, const int coarse_nz, const std::vector<int>& fine_slices) {
+    std::for_each(std::execution::par_unseq, fine_slices.begin(), fine_slices.end(), [&](const int k) {
+        for (int j = 0; j < fine_ny; ++j)
+            for (int i = 0; i < fine_nx; ++i)
+                fine_pressure[index_3d(i, j, k, fine_nx, fine_ny)] += sample_grid(coarse_pressure, 0.5f * static_cast<float>(i) - 0.25f, 0.5f * static_cast<float>(j) - 0.25f, 0.5f * static_cast<float>(k) - 0.25f, coarse_nx, coarse_ny, coarse_nz, false);
+    });
+}
+
 void subtract_gradient_u(float* u, const float* pressure, const int nx, const int ny, const int, const float h, const float dt, const std::vector<int>& slices) {
     std::for_each(std::execution::par_unseq, slices.begin(), slices.end(), [&](const int k) {
         for (int j = 0; j < ny; ++j)
@@ -412,6 +466,27 @@ int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeSt
     std::iota(y_slices.begin(), y_slices.end(), 0);
     std::iota(w_slices.begin(), w_slices.end(), 0);
     std::iota(interior_w_slices.begin(), interior_w_slices.end(), 1);
+    constexpr int max_levels = 16;
+    int level_count = 1;
+    int level_nx[max_levels]{nx};
+    int level_ny[max_levels]{ny};
+    int level_nz[max_levels]{nz};
+    float* pressure_levels[max_levels]{pressure};
+    float* rhs_levels[max_levels]{divergence};
+    std::vector<std::vector<int>> level_slices(max_levels);
+    level_slices[0] = cell_slices;
+    std::uint64_t coarse_offset = 0;
+    while (level_count < max_levels && (level_nx[level_count - 1] > 1 || level_ny[level_count - 1] > 1 || level_nz[level_count - 1] > 1)) {
+        level_nx[level_count] = std::max(1, (level_nx[level_count - 1] + 1) / 2);
+        level_ny[level_count] = std::max(1, (level_ny[level_count - 1] + 1) / 2);
+        level_nz[level_count] = std::max(1, (level_nz[level_count - 1] + 1) / 2);
+        pressure_levels[level_count] = omega_x + coarse_offset;
+        rhs_levels[level_count] = omega_y + coarse_offset;
+        level_slices[level_count].resize(static_cast<std::size_t>(level_nz[level_count]));
+        std::iota(level_slices[level_count].begin(), level_slices[level_count].end(), 0);
+        coarse_offset += static_cast<std::uint64_t>(level_nx[level_count]) * static_cast<std::uint64_t>(level_ny[level_count]) * static_cast<std::uint64_t>(level_nz[level_count]);
+        ++level_count;
+    }
 
     compute_vorticity(velocity_x, velocity_y, velocity_z, omega_x, omega_y, omega_z, omega_magnitude, nx, ny, nz, cell_size, cell_slices);
     compute_confinement(omega_x, omega_y, omega_z, omega_magnitude, force_x, force_y, force_z, nx, ny, nz, vorticity_epsilon, cell_size, cell_slices);
@@ -428,9 +503,50 @@ int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeSt
 
     std::memset(pressure, 0, static_cast<std::size_t>(cell_bytes));
     compute_divergence(divergence, previous_velocity_x, previous_velocity_y, previous_velocity_z, nx, ny, nz, cell_size, cell_slices);
-    for (int iteration = 0; iteration < pressure_iterations; ++iteration) {
-        pressure_rbgs(pressure, divergence, nx, ny, nz, cell_size, dt, 0, cell_slices);
-        pressure_rbgs(pressure, divergence, nx, ny, nz, cell_size, dt, 1, cell_slices);
+    {
+        const int v_cycles = std::max(1, pressure_iterations / 40);
+        const int smoothing_steps = 1;
+        const int coarse_steps = std::max(8, pressure_iterations / 10);
+        for (int cycle = 0; cycle < v_cycles; ++cycle) {
+            for (int level = 0; level + 1 < level_count; ++level) {
+                const int lx = level_nx[level];
+                const int ly = level_ny[level];
+                const int lz = level_nz[level];
+                for (int smooth = 0; smooth < smoothing_steps; ++smooth) {
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 0, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 1, level_slices[level]);
+                }
+                const int cx = level_nx[level + 1];
+                const int cy = level_ny[level + 1];
+                const int cz = level_nz[level + 1];
+                const auto coarse_bytes = static_cast<std::uint64_t>(cx) * static_cast<std::uint64_t>(cy) * static_cast<std::uint64_t>(cz) * sizeof(float);
+                std::memset(pressure_levels[level + 1], 0, static_cast<std::size_t>(coarse_bytes));
+                restrict_poisson_residual(rhs_levels[level + 1], pressure_levels[level], rhs_levels[level], lx, ly, lz, level_slices[level + 1]);
+            }
+            {
+                const int level = level_count - 1;
+                const int lx = level_nx[level];
+                const int ly = level_ny[level];
+                const int lz = level_nz[level];
+                for (int smooth = 0; smooth < coarse_steps; ++smooth) {
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 0, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 1, level_slices[level]);
+                }
+            }
+            for (int level = level_count - 2; level >= 0; --level) {
+                const int lx = level_nx[level];
+                const int ly = level_ny[level];
+                const int lz = level_nz[level];
+                const int cx = level_nx[level + 1];
+                const int cy = level_ny[level + 1];
+                const int cz = level_nz[level + 1];
+                prolongate_add(pressure_levels[level], pressure_levels[level + 1], lx, ly, lz, cx, cy, cz, level_slices[level]);
+                for (int smooth = 0; smooth < smoothing_steps; ++smooth) {
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 0, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 1, level_slices[level]);
+                }
+            }
+        }
     }
     subtract_gradient_u(previous_velocity_x, pressure, nx, ny, nz, cell_size, dt, cell_slices);
     subtract_gradient_v(previous_velocity_y, pressure, nx, ny, nz, cell_size, dt, cell_slices);
