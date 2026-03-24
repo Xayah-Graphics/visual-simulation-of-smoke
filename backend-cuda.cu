@@ -1,7 +1,5 @@
 #include "visual-simulation-of-smoke.h"
 #include <algorithm>
-#include <cmath>
-#include <cstdint>
 #include <cuda_runtime.h>
 
 #include <nvtx3/nvtx3.hpp>
@@ -429,7 +427,7 @@ int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDe
     const dim3 cells = make_grid(nx, ny, nz, block);
     const dim3 velocity_grid = make_grid(nx + 1, ny + 1, nz + 1, block);
     const bool cubic = use_monotonic_cubic != 0u;
-    const auto stream = reinterpret_cast<visual_smoke::Stream>(desc->stream);
+    const auto stream = static_cast<visual_smoke::Stream>(desc->stream);
     constexpr int max_levels = 16;
     int level_count = 1;
     int level_nx[max_levels]{nx};
