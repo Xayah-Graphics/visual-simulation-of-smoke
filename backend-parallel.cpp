@@ -274,16 +274,16 @@ void advect_w(float* dst, const float* src_u, const float* src_v, const float* s
     });
 }
 
-void compute_divergence(float* divergence, const float* u, const float* v, const float* w, const int nx, const int ny, const int nz, const float h, const std::vector<int>& slices) {
+void compute_divergence(float* divergence, const float* u, const float* v, const float* w, const int nx, const int ny, const int nz, const float h, const float dt, const std::vector<int>& slices) {
     std::for_each(std::execution::par_unseq, slices.begin(), slices.end(), [&](const int k) {
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i)
-                divergence[index_3d(i, j, k, nx, ny)] = (fetch_clamped(u, i + 1, j, k, nx + 1, ny, nz) - fetch_clamped(u, i, j, k, nx + 1, ny, nz)
-                    + fetch_clamped(v, i, j + 1, k, nx, ny + 1, nz) - fetch_clamped(v, i, j, k, nx, ny + 1, nz) + fetch_clamped(w, i, j, k + 1, nx, ny, nz + 1) - fetch_clamped(w, i, j, k, nx, ny, nz + 1)) / h;
+                divergence[index_3d(i, j, k, nx, ny)] = -(fetch_clamped(u, i + 1, j, k, nx + 1, ny, nz) - fetch_clamped(u, i, j, k, nx + 1, ny, nz)
+                    + fetch_clamped(v, i, j + 1, k, nx, ny + 1, nz) - fetch_clamped(v, i, j, k, nx, ny + 1, nz) + fetch_clamped(w, i, j, k + 1, nx, ny, nz + 1) - fetch_clamped(w, i, j, k, nx, ny, nz + 1)) * (h / dt);
     });
 }
 
-void pressure_rbgs(float* pressure, const float* divergence, const int nx, const int ny, const int nz, const float h, const float dt, const int parity, const std::vector<int>& slices) {
+void pressure_rbgs(float* pressure, const float* divergence, const int nx, const int ny, const int nz, const int parity, const std::vector<int>& slices) {
     std::for_each(std::execution::par_unseq, slices.begin(), slices.end(), [&](const int k) {
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
@@ -314,7 +314,7 @@ void pressure_rbgs(float* pressure, const float* divergence, const int nx, const
                     sum += pressure[index_3d(i, j, k + 1, nx, ny)];
                     ++count;
                 }
-                pressure[index_3d(i, j, k, nx, ny)] = count > 0 ? (sum - divergence[index_3d(i, j, k, nx, ny)] * h * h / dt) / static_cast<float>(count) : 0.0f;
+                pressure[index_3d(i, j, k, nx, ny)] = count > 0 ? (sum + divergence[index_3d(i, j, k, nx, ny)]) / static_cast<float>(count) : 0.0f;
             }
     });
 }
@@ -502,7 +502,7 @@ int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeSt
     set_w_boundary(previous_velocity_z, nx, ny, nz, y_slices);
 
     std::memset(pressure, 0, static_cast<std::size_t>(cell_bytes));
-    compute_divergence(divergence, previous_velocity_x, previous_velocity_y, previous_velocity_z, nx, ny, nz, cell_size, cell_slices);
+    compute_divergence(divergence, previous_velocity_x, previous_velocity_y, previous_velocity_z, nx, ny, nz, cell_size, dt, cell_slices);
     {
         const int v_cycles = std::max(1, pressure_iterations / 40);
         const int smoothing_steps = 1;
@@ -513,8 +513,8 @@ int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeSt
                 const int ly = level_ny[level];
                 const int lz = level_nz[level];
                 for (int smooth = 0; smooth < smoothing_steps; ++smooth) {
-                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 0, level_slices[level]);
-                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 1, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, 0, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, 1, level_slices[level]);
                 }
                 const int cx = level_nx[level + 1];
                 const int cy = level_ny[level + 1];
@@ -529,8 +529,8 @@ int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeSt
                 const int ly = level_ny[level];
                 const int lz = level_nz[level];
                 for (int smooth = 0; smooth < coarse_steps; ++smooth) {
-                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 0, level_slices[level]);
-                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 1, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, 0, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, 1, level_slices[level]);
                 }
             }
             for (int level = level_count - 2; level >= 0; --level) {
@@ -542,8 +542,8 @@ int32_t visual_simulation_of_smoke_step_parallel(const VisualSimulationOfSmokeSt
                 const int cz = level_nz[level + 1];
                 prolongate_add(pressure_levels[level], pressure_levels[level + 1], lx, ly, lz, cx, cy, cz, level_slices[level]);
                 for (int smooth = 0; smooth < smoothing_steps; ++smooth) {
-                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 0, level_slices[level]);
-                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, cell_size, dt, 1, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, 0, level_slices[level]);
+                    pressure_rbgs(pressure_levels[level], rhs_levels[level], lx, ly, lz, 1, level_slices[level]);
                 }
             }
         }
