@@ -9,10 +9,6 @@ namespace visual_smoke {
 
     namespace {
 
-        [[nodiscard]] inline int32_t cuda_code(cudaError_t status) noexcept {
-            return status == cudaSuccess ? 0 : 5001;
-        }
-
         inline std::uint64_t scalar_bytes(const int32_t nx, const int32_t ny, const int32_t nz) {
             return static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny) * static_cast<std::uint64_t>(nz) * sizeof(float);
         }
@@ -452,18 +448,18 @@ int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDe
         compute_vorticity_kernel<<<cells, block, 0, stream>>>(u, v, w, omega_x, omega_y, omega_z, omega_mag, nx, ny, nz, cell_size);
         compute_confinement_kernel<<<cells, block, 0, stream>>>(omega_x, omega_y, omega_z, omega_mag, force_x, force_y, force_z, nx, ny, nz, vorticity_epsilon, cell_size);
         apply_forces_kernel<<<velocity_grid, block, 0, stream>>>(u, v, w, density_f, temperature_f, force_x, force_y, force_z, nx, ny, nz, ambient_temperature, density_buoyancy, temperature_buoyancy, dt);
-        if (cuda_code(cudaGetLastError()) != 0) return 5001;
+        if (cudaGetLastError() != cudaSuccess) return 5001;
     }
     {
         nvtx3::scoped_range range{"vsmoke.step.advect_velocity"};
         advect_velocity_kernel<<<velocity_grid, block, 0, stream>>>(u_prev, v_prev, w_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic);
-        if (cuda_code(cudaGetLastError()) != 0) return 5001;
+        if (cudaGetLastError() != cudaSuccess) return 5001;
     }
     {
         nvtx3::scoped_range range{"vsmoke.step.project"};
-        if (cuda_code(cudaMemsetAsync(pressure, 0, cell_bytes, stream)) != 0) return 5001;
+        if (cudaMemsetAsync(pressure, 0, cell_bytes, stream) != cudaSuccess) return 5001;
         compute_poisson_rhs_kernel<<<cells, block, 0, stream>>>(divergence, u_prev, v_prev, w_prev, nx, ny, nz, cell_size, dt);
-        if (cuda_code(cudaGetLastError()) != 0) return 5001;
+        if (cudaGetLastError() != cudaSuccess) return 5001;
         const int v_cycles = std::max(1, pressure_iterations / 40);
         const int smoothing_steps = 1;
         const int coarse_steps = std::max(8, pressure_iterations / 10);
@@ -481,7 +477,7 @@ int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDe
                 const int cy = level_ny[level + 1];
                 const int cz = level_nz[level + 1];
                 const auto coarse_bytes = static_cast<std::uint64_t>(cx) * static_cast<std::uint64_t>(cy) * static_cast<std::uint64_t>(cz) * sizeof(float);
-                if (cuda_code(cudaMemsetAsync(pressure_levels[level + 1], 0, coarse_bytes, stream)) != 0) return 5001;
+                if (cudaMemsetAsync(pressure_levels[level + 1], 0, coarse_bytes, stream) != cudaSuccess) return 5001;
                 restrict_poisson_residual_kernel<<<make_grid(cx, cy, cz, block), block, 0, stream>>>(rhs_levels[level + 1], pressure_levels[level], rhs_levels[level], lx, ly, lz);
             }
             {
@@ -511,17 +507,17 @@ int32_t visual_simulation_of_smoke_step_cuda(const VisualSimulationOfSmokeStepDe
             }
         }
         project_velocity_kernel<<<velocity_grid, block, 0, stream>>>(u_prev, v_prev, w_prev, pressure, nx, ny, nz, dt / cell_size);
-        if (cuda_code(cudaGetLastError()) != 0) return 5001;
+        if (cudaGetLastError() != cudaSuccess) return 5001;
     }
-    if (cuda_code(cudaMemcpyAsync(u, u_prev, u_bytes, cudaMemcpyDeviceToDevice, stream)) != 0) return 5001;
-    if (cuda_code(cudaMemcpyAsync(v, v_prev, v_bytes, cudaMemcpyDeviceToDevice, stream)) != 0) return 5001;
-    if (cuda_code(cudaMemcpyAsync(w, w_prev, w_bytes, cudaMemcpyDeviceToDevice, stream)) != 0) return 5001;
-    if (cuda_code(cudaMemcpyAsync(density_prev, density_f, cell_bytes, cudaMemcpyDeviceToDevice, stream)) != 0) return 5001;
-    if (cuda_code(cudaMemcpyAsync(temperature_prev, temperature_f, cell_bytes, cudaMemcpyDeviceToDevice, stream)) != 0) return 5001;
+    if (cudaMemcpyAsync(u, u_prev, u_bytes, cudaMemcpyDeviceToDevice, stream) != cudaSuccess) return 5001;
+    if (cudaMemcpyAsync(v, v_prev, v_bytes, cudaMemcpyDeviceToDevice, stream) != cudaSuccess) return 5001;
+    if (cudaMemcpyAsync(w, w_prev, w_bytes, cudaMemcpyDeviceToDevice, stream) != cudaSuccess) return 5001;
+    if (cudaMemcpyAsync(density_prev, density_f, cell_bytes, cudaMemcpyDeviceToDevice, stream) != cudaSuccess) return 5001;
+    if (cudaMemcpyAsync(temperature_prev, temperature_f, cell_bytes, cudaMemcpyDeviceToDevice, stream) != cudaSuccess) return 5001;
     {
         nvtx3::scoped_range range{"vsmoke.step.advect_scalars"};
         advect_scalars_kernel<<<cells, block, 0, stream>>>(density_f, temperature_f, density_prev, temperature_prev, u, v, w, nx, ny, nz, cell_size, dt, cubic);
-        if (cuda_code(cudaGetLastError()) != 0) return 5001;
+        if (cudaGetLastError() != cudaSuccess) return 5001;
     }
     return 0;
 }
