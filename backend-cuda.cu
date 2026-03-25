@@ -9,6 +9,13 @@ namespace visual_smoke {
 
     namespace {
 
+        constexpr int boundary_x_min_face = 0;
+        constexpr int boundary_x_max_face = 1;
+        constexpr int boundary_y_min_face = 2;
+        constexpr int boundary_y_max_face = 3;
+        constexpr int boundary_z_min_face = 4;
+        constexpr int boundary_z_max_face = 5;
+
         constexpr int max_levels = 16;
 
         struct GridLevel {
@@ -33,6 +40,14 @@ namespace visual_smoke {
 
         inline dim3 make_grid(const int nx, const int ny, const int nz, const dim3& block) {
             return dim3(static_cast<unsigned>((nx + static_cast<int>(block.x) - 1) / static_cast<int>(block.x)), static_cast<unsigned>((ny + static_cast<int>(block.y) - 1) / static_cast<int>(block.y)), static_cast<unsigned>((nz + static_cast<int>(block.z) - 1) / static_cast<int>(block.z)));
+        }
+
+        __host__ __device__ uint32_t boundary_type(const uint32_t boundary_pack, const int face) {
+            return (boundary_pack >> (face * 3)) & 0x7u;
+        }
+
+        uint32_t make_boundary_pack(const uint32_t x_min, const uint32_t x_max, const uint32_t y_min, const uint32_t y_max, const uint32_t z_min, const uint32_t z_max) {
+            return (x_min << (boundary_x_min_face * 3)) | (x_max << (boundary_x_max_face * 3)) | (y_min << (boundary_y_min_face * 3)) | (y_max << (boundary_y_max_face * 3)) | (z_min << (boundary_z_min_face * 3)) | (z_max << (boundary_z_max_face * 3));
         }
 
         __host__ __device__ inline std::uint64_t index_3d(int x, int y, int z, int sx, int sy) {
@@ -385,6 +400,126 @@ namespace visual_smoke {
             scalar_dst[index_3d(i, j, k, nx, ny)] = clamp_non_negative != 0 ? fmaxf(0.0f, value) : value;
         }
 
+        __global__ void enforce_velocity_boundaries_kernel(
+            float* velocity_x,
+            float* velocity_y,
+            float* velocity_z,
+            const int nx,
+            const int ny,
+            const int nz,
+            const uint32_t boundary_pack,
+            const float inflow_velocity_x_min,
+            const float inflow_velocity_x_max,
+            const float inflow_velocity_y_min,
+            const float inflow_velocity_y_max,
+            const float inflow_velocity_z_min,
+            const float inflow_velocity_z_max) {
+            const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+            const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+            const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+
+            const uint32_t bx_min = boundary_type(boundary_pack, boundary_x_min_face);
+            const uint32_t bx_max = boundary_type(boundary_pack, boundary_x_max_face);
+            const uint32_t by_min = boundary_type(boundary_pack, boundary_y_min_face);
+            const uint32_t by_max = boundary_type(boundary_pack, boundary_y_max_face);
+            const uint32_t bz_min = boundary_type(boundary_pack, boundary_z_min_face);
+            const uint32_t bz_max = boundary_type(boundary_pack, boundary_z_max_face);
+
+            if (x <= nx && y < ny && z < nz) {
+                const auto u_index = index_3d(x, y, z, nx + 1, ny);
+                const bool touches_no_slip_tangent = (y == 0 && by_min == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (y == ny - 1 && by_max == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (z == 0 && bz_min == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (z == nz - 1 && bz_max == VISUAL_SMOKE_BOUNDARY_NO_SLIP);
+                if (touches_no_slip_tangent) velocity_x[u_index] = 0.0f;
+                if (x == 0) {
+                    if (bx_min == VISUAL_SMOKE_BOUNDARY_INFLOW) velocity_x[u_index] = inflow_velocity_x_min;
+                    else if (bx_min == VISUAL_SMOKE_BOUNDARY_OUTFLOW) velocity_x[u_index] = velocity_x[index_3d(1, y, z, nx + 1, ny)];
+                    else velocity_x[u_index] = 0.0f;
+                }
+                if (x == nx) {
+                    if (bx_max == VISUAL_SMOKE_BOUNDARY_INFLOW) velocity_x[u_index] = inflow_velocity_x_max;
+                    else if (bx_max == VISUAL_SMOKE_BOUNDARY_OUTFLOW) velocity_x[u_index] = velocity_x[index_3d(nx - 1, y, z, nx + 1, ny)];
+                    else velocity_x[u_index] = 0.0f;
+                }
+            }
+
+            if (x < nx && y <= ny && z < nz) {
+                const auto v_index = index_3d(x, y, z, nx, ny + 1);
+                const bool touches_no_slip_tangent = (x == 0 && bx_min == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (x == nx - 1 && bx_max == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (z == 0 && bz_min == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (z == nz - 1 && bz_max == VISUAL_SMOKE_BOUNDARY_NO_SLIP);
+                if (touches_no_slip_tangent) velocity_y[v_index] = 0.0f;
+                if (y == 0) {
+                    if (by_min == VISUAL_SMOKE_BOUNDARY_INFLOW) velocity_y[v_index] = inflow_velocity_y_min;
+                    else if (by_min == VISUAL_SMOKE_BOUNDARY_OUTFLOW) velocity_y[v_index] = velocity_y[index_3d(x, 1, z, nx, ny + 1)];
+                    else velocity_y[v_index] = 0.0f;
+                }
+                if (y == ny) {
+                    if (by_max == VISUAL_SMOKE_BOUNDARY_INFLOW) velocity_y[v_index] = inflow_velocity_y_max;
+                    else if (by_max == VISUAL_SMOKE_BOUNDARY_OUTFLOW) velocity_y[v_index] = velocity_y[index_3d(x, ny - 1, z, nx, ny + 1)];
+                    else velocity_y[v_index] = 0.0f;
+                }
+            }
+
+            if (x < nx && y < ny && z <= nz) {
+                const auto w_index = index_3d(x, y, z, nx, ny);
+                const bool touches_no_slip_tangent = (x == 0 && bx_min == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (x == nx - 1 && bx_max == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (y == 0 && by_min == VISUAL_SMOKE_BOUNDARY_NO_SLIP) || (y == ny - 1 && by_max == VISUAL_SMOKE_BOUNDARY_NO_SLIP);
+                if (touches_no_slip_tangent) velocity_z[w_index] = 0.0f;
+                if (z == 0) {
+                    if (bz_min == VISUAL_SMOKE_BOUNDARY_INFLOW) velocity_z[w_index] = inflow_velocity_z_min;
+                    else if (bz_min == VISUAL_SMOKE_BOUNDARY_OUTFLOW) velocity_z[w_index] = velocity_z[index_3d(x, y, 1, nx, ny)];
+                    else velocity_z[w_index] = 0.0f;
+                }
+                if (z == nz) {
+                    if (bz_max == VISUAL_SMOKE_BOUNDARY_INFLOW) velocity_z[w_index] = inflow_velocity_z_max;
+                    else if (bz_max == VISUAL_SMOKE_BOUNDARY_OUTFLOW) velocity_z[w_index] = velocity_z[index_3d(x, y, nz - 1, nx, ny)];
+                    else velocity_z[w_index] = 0.0f;
+                }
+            }
+        }
+
+        __global__ void apply_scalar_inflow_boundaries_kernel(
+            float* scalar,
+            const int nx,
+            const int ny,
+            const int nz,
+            const uint32_t boundary_pack,
+            const float inflow_scalar_x_min,
+            const float inflow_scalar_x_max,
+            const float inflow_scalar_y_min,
+            const float inflow_scalar_y_max,
+            const float inflow_scalar_z_min,
+            const float inflow_scalar_z_max) {
+            const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+            const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+            const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+            if (x >= nx || y >= ny || z >= nz) return;
+
+            float sum = 0.0f;
+            int count = 0;
+            if (x == 0 && boundary_type(boundary_pack, boundary_x_min_face) == VISUAL_SMOKE_BOUNDARY_INFLOW) {
+                sum += inflow_scalar_x_min;
+                ++count;
+            }
+            if (x == nx - 1 && boundary_type(boundary_pack, boundary_x_max_face) == VISUAL_SMOKE_BOUNDARY_INFLOW) {
+                sum += inflow_scalar_x_max;
+                ++count;
+            }
+            if (y == 0 && boundary_type(boundary_pack, boundary_y_min_face) == VISUAL_SMOKE_BOUNDARY_INFLOW) {
+                sum += inflow_scalar_y_min;
+                ++count;
+            }
+            if (y == ny - 1 && boundary_type(boundary_pack, boundary_y_max_face) == VISUAL_SMOKE_BOUNDARY_INFLOW) {
+                sum += inflow_scalar_y_max;
+                ++count;
+            }
+            if (z == 0 && boundary_type(boundary_pack, boundary_z_min_face) == VISUAL_SMOKE_BOUNDARY_INFLOW) {
+                sum += inflow_scalar_z_min;
+                ++count;
+            }
+            if (z == nz - 1 && boundary_type(boundary_pack, boundary_z_max_face) == VISUAL_SMOKE_BOUNDARY_INFLOW) {
+                sum += inflow_scalar_z_max;
+                ++count;
+            }
+            if (count > 0) scalar[index_3d(x, y, z, nx, ny)] = sum / static_cast<float>(count);
+        }
+
         __global__ void add_scalar_source_kernel(float* destination, int sx, int sy, int sz, float center_x, float center_y, float center_z, float radius, float amount, float sample_offset_x, float sample_offset_y, float sample_offset_z) {
             const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
             const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
@@ -502,6 +637,7 @@ int32_t visual_simulation_of_smoke_forces_cuda(const VisualSimulationOfSmokeForc
     const dim3 block(static_cast<unsigned>(std::max(desc->block_x, 1)), static_cast<unsigned>(std::max(desc->block_y, 1)), static_cast<unsigned>(std::max(desc->block_z, 1)));
     const dim3 cells         = make_grid(desc->nx, desc->ny, desc->nz, block);
     const dim3 velocity_grid = make_grid(desc->nx + 1, desc->ny + 1, desc->nz + 1, block);
+    const uint32_t boundary_pack = make_boundary_pack(desc->boundary_x_min, desc->boundary_x_max, desc->boundary_y_min, desc->boundary_y_max, desc->boundary_z_min, desc->boundary_z_max);
     const auto stream        = static_cast<Stream>(desc->stream);
 
     nvtx3::scoped_range range("vsmoke.step.forces");
@@ -511,6 +647,8 @@ int32_t visual_simulation_of_smoke_forces_cuda(const VisualSimulationOfSmokeForc
         static_cast<float*>(desc->temporary_force_z), desc->nx, desc->ny, desc->nz, desc->vorticity_epsilon, desc->cell_size);
     apply_forces_kernel<<<velocity_grid, block, 0, stream>>>(static_cast<float*>(desc->velocity_x), static_cast<float*>(desc->velocity_y), static_cast<float*>(desc->velocity_z), static_cast<float*>(desc->density), static_cast<float*>(desc->temperature), static_cast<float*>(desc->temporary_force_x), static_cast<float*>(desc->temporary_force_y),
         static_cast<float*>(desc->temporary_force_z), desc->nx, desc->ny, desc->nz, desc->ambient_temperature, desc->density_buoyancy, desc->temperature_buoyancy, desc->dt);
+    enforce_velocity_boundaries_kernel<<<velocity_grid, block, 0, stream>>>(static_cast<float*>(desc->velocity_x), static_cast<float*>(desc->velocity_y), static_cast<float*>(desc->velocity_z), desc->nx, desc->ny, desc->nz, boundary_pack, desc->inflow_velocity_x_min, desc->inflow_velocity_x_max, desc->inflow_velocity_y_min,
+        desc->inflow_velocity_y_max, desc->inflow_velocity_z_min, desc->inflow_velocity_z_max);
     if (cudaGetLastError() != cudaSuccess) return 5001;
     return 0;
 }
@@ -522,11 +660,14 @@ int32_t visual_simulation_of_smoke_advect_velocity_cuda(const VisualSimulationOf
     const dim3 block(static_cast<unsigned>(std::max(desc->block_x, 1)), static_cast<unsigned>(std::max(desc->block_y, 1)), static_cast<unsigned>(std::max(desc->block_z, 1)));
     const dim3 velocity_grid = make_grid(desc->nx + 1, desc->ny + 1, desc->nz + 1, block);
     const bool cubic         = desc->use_monotonic_cubic != 0u;
+    const uint32_t boundary_pack = make_boundary_pack(desc->boundary_x_min, desc->boundary_x_max, desc->boundary_y_min, desc->boundary_y_max, desc->boundary_z_min, desc->boundary_z_max);
     const auto stream        = static_cast<Stream>(desc->stream);
 
     nvtx3::scoped_range range("vsmoke.step.advect_velocity");
     advect_velocity_kernel<<<velocity_grid, block, 0, stream>>>(static_cast<float*>(desc->temporary_previous_velocity_x), static_cast<float*>(desc->temporary_previous_velocity_y), static_cast<float*>(desc->temporary_previous_velocity_z), static_cast<float*>(desc->velocity_x), static_cast<float*>(desc->velocity_y), static_cast<float*>(desc->velocity_z),
         desc->nx, desc->ny, desc->nz, desc->cell_size, desc->dt, cubic);
+    enforce_velocity_boundaries_kernel<<<velocity_grid, block, 0, stream>>>(static_cast<float*>(desc->temporary_previous_velocity_x), static_cast<float*>(desc->temporary_previous_velocity_y), static_cast<float*>(desc->temporary_previous_velocity_z), desc->nx, desc->ny, desc->nz, boundary_pack, desc->inflow_velocity_x_min,
+        desc->inflow_velocity_x_max, desc->inflow_velocity_y_min, desc->inflow_velocity_y_max, desc->inflow_velocity_z_min, desc->inflow_velocity_z_max);
     if (cudaGetLastError() != cudaSuccess) return 5001;
     return 0;
 }
@@ -538,6 +679,7 @@ int32_t visual_simulation_of_smoke_project_cuda(const VisualSimulationOfSmokePro
     const dim3 block(static_cast<unsigned>(std::max(desc->block_x, 1)), static_cast<unsigned>(std::max(desc->block_y, 1)), static_cast<unsigned>(std::max(desc->block_z, 1)));
     const dim3 cells                       = make_grid(desc->nx, desc->ny, desc->nz, block);
     const dim3 velocity_grid               = make_grid(desc->nx + 1, desc->ny + 1, desc->nz + 1, block);
+    const uint32_t boundary_pack           = make_boundary_pack(desc->boundary_x_min, desc->boundary_x_max, desc->boundary_y_min, desc->boundary_y_max, desc->boundary_z_min, desc->boundary_z_max);
     const auto stream                      = static_cast<Stream>(desc->stream);
     const auto cell_bytes                  = static_cast<std::uint64_t>(desc->nx) * static_cast<std::uint64_t>(desc->ny) * static_cast<std::uint64_t>(desc->nz) * sizeof(float);
     const GridHierarchy pressure_hierarchy = build_hierarchy(desc->nx, desc->ny, desc->nz, static_cast<float*>(desc->temporary_pressure), static_cast<float*>(desc->temporary_divergence), static_cast<float*>(desc->temporary_omega_x), static_cast<float*>(desc->temporary_omega_y));
@@ -550,6 +692,8 @@ int32_t visual_simulation_of_smoke_project_cuda(const VisualSimulationOfSmokePro
     const VCycleConfig config{.cycles = std::max(1, desc->pressure_iterations / 40), .pre_smooth = 1, .post_smooth = 1, .coarse_smooth = std::max(8, desc->pressure_iterations / 10)};
     if (const int32_t code = run_v_cycle(pressure_hierarchy, config, ops, block, stream); code != 0) return code;
     project_velocity_kernel<<<velocity_grid, block, 0, stream>>>(static_cast<float*>(desc->temporary_previous_velocity_x), static_cast<float*>(desc->temporary_previous_velocity_y), static_cast<float*>(desc->temporary_previous_velocity_z), static_cast<float*>(desc->temporary_pressure), desc->nx, desc->ny, desc->nz, desc->dt / desc->cell_size);
+    enforce_velocity_boundaries_kernel<<<velocity_grid, block, 0, stream>>>(static_cast<float*>(desc->temporary_previous_velocity_x), static_cast<float*>(desc->temporary_previous_velocity_y), static_cast<float*>(desc->temporary_previous_velocity_z), desc->nx, desc->ny, desc->nz, boundary_pack, desc->inflow_velocity_x_min,
+        desc->inflow_velocity_x_max, desc->inflow_velocity_y_min, desc->inflow_velocity_y_max, desc->inflow_velocity_z_min, desc->inflow_velocity_z_max);
     if (cudaGetLastError() != cudaSuccess) return 5001;
     return 0;
 }
@@ -562,6 +706,7 @@ int32_t visual_simulation_of_smoke_advect_scalar_flow_cuda(const VisualSimulatio
     const dim3 block(static_cast<unsigned>(std::max(desc->block_x, 1)), static_cast<unsigned>(std::max(desc->block_y, 1)), static_cast<unsigned>(std::max(desc->block_z, 1)));
     const dim3 cells      = make_grid(desc->nx, desc->ny, desc->nz, block);
     const bool cubic      = desc->use_monotonic_cubic != 0u;
+    const uint32_t boundary_pack = make_boundary_pack(desc->boundary_x_min, desc->boundary_x_max, desc->boundary_y_min, desc->boundary_y_max, desc->boundary_z_min, desc->boundary_z_max);
     const auto stream     = static_cast<Stream>(desc->stream);
     const auto cell_bytes = static_cast<std::uint64_t>(desc->nx) * static_cast<std::uint64_t>(desc->ny) * static_cast<std::uint64_t>(desc->nz) * sizeof(float);
 
@@ -571,6 +716,8 @@ int32_t visual_simulation_of_smoke_advect_scalar_flow_cuda(const VisualSimulatio
         if (cudaMemcpyAsync(binding.temporary_previous_scalar, binding.scalar, cell_bytes, cudaMemcpyDeviceToDevice, stream) != cudaSuccess) return 5001;
         advect_scalar_kernel<<<cells, block, 0, stream>>>(
             static_cast<float*>(binding.scalar), static_cast<float*>(binding.temporary_previous_scalar), static_cast<float*>(desc->velocity_x), static_cast<float*>(desc->velocity_y), static_cast<float*>(desc->velocity_z), desc->nx, desc->ny, desc->nz, desc->cell_size, desc->dt, cubic, static_cast<int>(binding.clamp_non_negative));
+        apply_scalar_inflow_boundaries_kernel<<<cells, block, 0, stream>>>(
+            static_cast<float*>(binding.scalar), desc->nx, desc->ny, desc->nz, boundary_pack, binding.inflow_scalar_x_min, binding.inflow_scalar_x_max, binding.inflow_scalar_y_min, binding.inflow_scalar_y_max, binding.inflow_scalar_z_min, binding.inflow_scalar_z_max);
         if (cudaGetLastError() != cudaSuccess) return 5001;
     }
     return 0;

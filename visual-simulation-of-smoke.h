@@ -28,7 +28,8 @@ Error code scheme:
 1002  : invalid cell size
 1003  : invalid dt
 1004  : invalid iteration count
-1005  : unsupported api_version
+1005  : invalid boundary type
+1006  : unsupported api_version
 2xxx  : buffer errors
 2001  : invalid density buffer
 2002  : invalid temperature buffer
@@ -55,6 +56,13 @@ Error code scheme:
 
 #define VISUAL_SIMULATION_OF_SMOKE_API_VERSION 1u
 
+typedef enum VisualSimulationOfSmokeBoundaryType {
+    VISUAL_SMOKE_BOUNDARY_NO_SLIP   = 0,
+    VISUAL_SMOKE_BOUNDARY_FREE_SLIP = 1,
+    VISUAL_SMOKE_BOUNDARY_INFLOW    = 2,
+    VISUAL_SMOKE_BOUNDARY_OUTFLOW   = 3,
+} VisualSimulationOfSmokeBoundaryType;
+
 typedef struct VisualSimulationOfSmokeForcesDesc {
     uint32_t struct_size;
     uint32_t api_version;
@@ -67,6 +75,18 @@ typedef struct VisualSimulationOfSmokeForcesDesc {
     float density_buoyancy;
     float temperature_buoyancy;
     float vorticity_epsilon;
+    uint32_t boundary_x_min;
+    uint32_t boundary_x_max;
+    uint32_t boundary_y_min;
+    uint32_t boundary_y_max;
+    uint32_t boundary_z_min;
+    uint32_t boundary_z_max;
+    float inflow_velocity_x_min;
+    float inflow_velocity_x_max;
+    float inflow_velocity_y_min;
+    float inflow_velocity_y_max;
+    float inflow_velocity_z_min;
+    float inflow_velocity_z_max;
     void* density;
     void* temperature;
     void* velocity_x;
@@ -94,6 +114,18 @@ typedef struct VisualSimulationOfSmokeAdvectVelocityDesc {
     float cell_size;
     float dt;
     uint32_t use_monotonic_cubic;
+    uint32_t boundary_x_min;
+    uint32_t boundary_x_max;
+    uint32_t boundary_y_min;
+    uint32_t boundary_y_max;
+    uint32_t boundary_z_min;
+    uint32_t boundary_z_max;
+    float inflow_velocity_x_min;
+    float inflow_velocity_x_max;
+    float inflow_velocity_y_min;
+    float inflow_velocity_y_max;
+    float inflow_velocity_z_min;
+    float inflow_velocity_z_max;
     void* velocity_x;
     void* velocity_y;
     void* velocity_z;
@@ -115,6 +147,18 @@ typedef struct VisualSimulationOfSmokeProjectDesc {
     float cell_size;
     float dt;
     int32_t pressure_iterations;
+    uint32_t boundary_x_min;
+    uint32_t boundary_x_max;
+    uint32_t boundary_y_min;
+    uint32_t boundary_y_max;
+    uint32_t boundary_z_min;
+    uint32_t boundary_z_max;
+    float inflow_velocity_x_min;
+    float inflow_velocity_x_max;
+    float inflow_velocity_y_min;
+    float inflow_velocity_y_max;
+    float inflow_velocity_z_min;
+    float inflow_velocity_z_max;
     void* temporary_previous_velocity_x;
     void* temporary_previous_velocity_y;
     void* temporary_previous_velocity_z;
@@ -132,6 +176,12 @@ typedef struct VisualSimulationOfSmokeScalarFlowBinding {
     void* scalar;
     void* temporary_previous_scalar;
     uint32_t clamp_non_negative;
+    float inflow_scalar_x_min;
+    float inflow_scalar_x_max;
+    float inflow_scalar_y_min;
+    float inflow_scalar_y_max;
+    float inflow_scalar_z_min;
+    float inflow_scalar_z_max;
 } VisualSimulationOfSmokeScalarFlowBinding;
 
 typedef struct VisualSimulationOfSmokeAdvectScalarFlowDesc {
@@ -143,6 +193,12 @@ typedef struct VisualSimulationOfSmokeAdvectScalarFlowDesc {
     float cell_size;
     float dt;
     uint32_t use_monotonic_cubic;
+    uint32_t boundary_x_min;
+    uint32_t boundary_x_max;
+    uint32_t boundary_y_min;
+    uint32_t boundary_y_max;
+    uint32_t boundary_z_min;
+    uint32_t boundary_z_max;
     const VisualSimulationOfSmokeScalarFlowBinding* scalar_bindings;
     int32_t scalar_count;
     void* velocity_x;
