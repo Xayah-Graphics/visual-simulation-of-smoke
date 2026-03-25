@@ -95,147 +95,178 @@ int main() {
 
     const auto cuda_begin = std::chrono::steady_clock::now();
     for (int frame = 0; exit_code == EXIT_SUCCESS && frame < frames; ++frame) {
-        VisualSimulationOfSmokeAddScalarSourceDesc density_source_desc{};
-        density_source_desc.struct_size     = sizeof(VisualSimulationOfSmokeAddScalarSourceDesc);
-        density_source_desc.api_version     = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
-        density_source_desc.nx              = nx;
-        density_source_desc.ny              = ny;
-        density_source_desc.nz              = nz;
-        density_source_desc.scalar          = density;
-        density_source_desc.center_x        = static_cast<float>(nx) * 0.5f;
-        density_source_desc.center_y        = static_cast<float>(ny) * 0.18f;
-        density_source_desc.center_z        = static_cast<float>(nz) * 0.5f;
-        density_source_desc.radius          = 4.5f;
-        density_source_desc.amount          = 0.85f;
-        density_source_desc.sample_offset_x = 0.5f;
-        density_source_desc.sample_offset_y = 0.5f;
-        density_source_desc.sample_offset_z = 0.5f;
-        density_source_desc.block_x         = block_x;
-        density_source_desc.block_y         = block_y;
-        density_source_desc.block_z         = block_z;
-        density_source_desc.stream          = stream;
+        VisualSimulationOfSmokeAddScalarSourceDesc density_source_desc{
+            .struct_size     = sizeof(VisualSimulationOfSmokeAddScalarSourceDesc),
+            .api_version     = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx              = nx,
+            .ny              = ny,
+            .nz              = nz,
+            .scalar          = density,
+            .center_x        = static_cast<float>(nx) * 0.5f,
+            .center_y        = static_cast<float>(ny) * 0.18f,
+            .center_z        = static_cast<float>(nz) * 0.5f,
+            .radius          = 4.5f,
+            .amount          = 0.85f,
+            .sample_offset_x = 0.5f,
+            .sample_offset_y = 0.5f,
+            .sample_offset_z = 0.5f,
+            .block_x         = block_x,
+            .block_y         = block_y,
+            .block_z         = block_z,
+            .stream          = stream,
+        };
 
-        VisualSimulationOfSmokeAddScalarSourceDesc temperature_source_desc = density_source_desc;
-        temperature_source_desc.scalar                                     = temperature;
-        temperature_source_desc.amount                                     = 1.35f;
+        VisualSimulationOfSmokeAddScalarSourceDesc temperature_source_desc{
+            .struct_size     = sizeof(VisualSimulationOfSmokeAddScalarSourceDesc),
+            .api_version     = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx              = nx,
+            .ny              = ny,
+            .nz              = nz,
+            .scalar          = temperature,
+            .center_x        = static_cast<float>(nx) * 0.5f,
+            .center_y        = static_cast<float>(ny) * 0.18f,
+            .center_z        = static_cast<float>(nz) * 0.5f,
+            .radius          = 4.5f,
+            .amount          = 1.35f,
+            .sample_offset_x = 0.5f,
+            .sample_offset_y = 0.5f,
+            .sample_offset_z = 0.5f,
+            .block_x         = block_x,
+            .block_y         = block_y,
+            .block_z         = block_z,
+            .stream          = stream,
+        };
 
-        VisualSimulationOfSmokeAddVectorSourceDesc velocity_source_desc{};
-        velocity_source_desc.struct_size = sizeof(VisualSimulationOfSmokeAddVectorSourceDesc);
-        velocity_source_desc.api_version = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
-        velocity_source_desc.nx          = nx;
-        velocity_source_desc.ny          = ny;
-        velocity_source_desc.nz          = nz;
-        velocity_source_desc.vector_x    = velocity_x;
-        velocity_source_desc.vector_y    = velocity_y;
-        velocity_source_desc.vector_z    = velocity_z;
-        velocity_source_desc.center_x    = density_source_desc.center_x;
-        velocity_source_desc.center_y    = density_source_desc.center_y;
-        velocity_source_desc.center_z    = density_source_desc.center_z;
-        velocity_source_desc.radius      = density_source_desc.radius;
-        velocity_source_desc.amount_x    = 0.0f;
-        velocity_source_desc.amount_y    = 1.2f;
-        velocity_source_desc.amount_z    = 0.0f;
-        velocity_source_desc.block_x     = block_x;
-        velocity_source_desc.block_y     = block_y;
-        velocity_source_desc.block_z     = block_z;
-        velocity_source_desc.stream      = stream;
+        VisualSimulationOfSmokeAddVectorSourceDesc velocity_source_desc{
+            .struct_size = sizeof(VisualSimulationOfSmokeAddVectorSourceDesc),
+            .api_version = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx          = nx,
+            .ny          = ny,
+            .nz          = nz,
+            .vector_x    = velocity_x,
+            .vector_y    = velocity_y,
+            .vector_z    = velocity_z,
+            .center_x    = density_source_desc.center_x,
+            .center_y    = density_source_desc.center_y,
+            .center_z    = density_source_desc.center_z,
+            .radius      = density_source_desc.radius,
+            .amount_x    = 0.0f,
+            .amount_y    = 1.2f,
+            .amount_z    = 0.0f,
+            .block_x     = block_x,
+            .block_y     = block_y,
+            .block_z     = block_z,
+            .stream      = stream,
+        };
 
         if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_add_scalar_source_cuda(&density_source_desc), "visual_simulation_of_smoke_add_scalar_source_cuda(density)")) exit_code = EXIT_FAILURE;
         if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_add_scalar_source_cuda(&temperature_source_desc), "visual_simulation_of_smoke_add_scalar_source_cuda(temperature)")) exit_code = EXIT_FAILURE;
         if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_add_vector_source_cuda(&velocity_source_desc), "visual_simulation_of_smoke_add_vector_source_cuda")) exit_code = EXIT_FAILURE;
 
-        VisualSimulationOfSmokeForcesDesc forces_desc{};
-        forces_desc.struct_size               = sizeof(VisualSimulationOfSmokeForcesDesc);
-        forces_desc.api_version               = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
-        forces_desc.nx                        = nx;
-        forces_desc.ny                        = ny;
-        forces_desc.nz                        = nz;
-        forces_desc.cell_size                 = cell_size;
-        forces_desc.dt                        = dt;
-        forces_desc.ambient_temperature       = ambient_temperature;
-        forces_desc.density_buoyancy          = density_buoyancy;
-        forces_desc.temperature_buoyancy      = temperature_buoyancy;
-        forces_desc.vorticity_epsilon         = vorticity_epsilon;
-        forces_desc.density                   = density;
-        forces_desc.temperature               = temperature;
-        forces_desc.velocity_x                = velocity_x;
-        forces_desc.velocity_y                = velocity_y;
-        forces_desc.velocity_z                = velocity_z;
-        forces_desc.temporary_omega_x         = temporary_omega_x;
-        forces_desc.temporary_omega_y         = temporary_omega_y;
-        forces_desc.temporary_omega_z         = temporary_omega_z;
-        forces_desc.temporary_omega_magnitude = temporary_omega_magnitude;
-        forces_desc.temporary_force_x         = temporary_force_x;
-        forces_desc.temporary_force_y         = temporary_force_y;
-        forces_desc.temporary_force_z         = temporary_force_z;
-        forces_desc.block_x                   = block_x;
-        forces_desc.block_y                   = block_y;
-        forces_desc.block_z                   = block_z;
-        forces_desc.stream                    = stream;
+        VisualSimulationOfSmokeForcesDesc forces_desc{
+            .struct_size               = sizeof(VisualSimulationOfSmokeForcesDesc),
+            .api_version               = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx                        = nx,
+            .ny                        = ny,
+            .nz                        = nz,
+            .cell_size                 = cell_size,
+            .dt                        = dt,
+            .ambient_temperature       = ambient_temperature,
+            .density_buoyancy          = density_buoyancy,
+            .temperature_buoyancy      = temperature_buoyancy,
+            .vorticity_epsilon         = vorticity_epsilon,
+            .density                   = density,
+            .temperature               = temperature,
+            .velocity_x                = velocity_x,
+            .velocity_y                = velocity_y,
+            .velocity_z                = velocity_z,
+            .temporary_omega_x         = temporary_omega_x,
+            .temporary_omega_y         = temporary_omega_y,
+            .temporary_omega_z         = temporary_omega_z,
+            .temporary_omega_magnitude = temporary_omega_magnitude,
+            .temporary_force_x         = temporary_force_x,
+            .temporary_force_y         = temporary_force_y,
+            .temporary_force_z         = temporary_force_z,
+            .block_x                   = block_x,
+            .block_y                   = block_y,
+            .block_z                   = block_z,
+            .stream                    = stream,
+        };
 
-        VisualSimulationOfSmokeAdvectVelocityDesc advect_velocity_desc{};
-        advect_velocity_desc.struct_size                   = sizeof(VisualSimulationOfSmokeAdvectVelocityDesc);
-        advect_velocity_desc.api_version                   = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
-        advect_velocity_desc.nx                            = nx;
-        advect_velocity_desc.ny                            = ny;
-        advect_velocity_desc.nz                            = nz;
-        advect_velocity_desc.cell_size                     = cell_size;
-        advect_velocity_desc.dt                            = dt;
-        advect_velocity_desc.use_monotonic_cubic           = use_monotonic_cubic;
-        advect_velocity_desc.velocity_x                    = velocity_x;
-        advect_velocity_desc.velocity_y                    = velocity_y;
-        advect_velocity_desc.velocity_z                    = velocity_z;
-        advect_velocity_desc.temporary_previous_velocity_x = temporary_previous_velocity_x;
-        advect_velocity_desc.temporary_previous_velocity_y = temporary_previous_velocity_y;
-        advect_velocity_desc.temporary_previous_velocity_z = temporary_previous_velocity_z;
-        advect_velocity_desc.block_x                       = block_x;
-        advect_velocity_desc.block_y                       = block_y;
-        advect_velocity_desc.block_z                       = block_z;
-        advect_velocity_desc.stream                        = stream;
+        VisualSimulationOfSmokeAdvectVelocityDesc advect_velocity_desc{
+            .struct_size                   = sizeof(VisualSimulationOfSmokeAdvectVelocityDesc),
+            .api_version                   = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx                            = nx,
+            .ny                            = ny,
+            .nz                            = nz,
+            .cell_size                     = cell_size,
+            .dt                            = dt,
+            .use_monotonic_cubic           = use_monotonic_cubic,
+            .velocity_x                    = velocity_x,
+            .velocity_y                    = velocity_y,
+            .velocity_z                    = velocity_z,
+            .temporary_previous_velocity_x = temporary_previous_velocity_x,
+            .temporary_previous_velocity_y = temporary_previous_velocity_y,
+            .temporary_previous_velocity_z = temporary_previous_velocity_z,
+            .block_x                       = block_x,
+            .block_y                       = block_y,
+            .block_z                       = block_z,
+            .stream                        = stream,
+        };
 
-        VisualSimulationOfSmokeProjectDesc project_desc{};
-        project_desc.struct_size                   = sizeof(VisualSimulationOfSmokeProjectDesc);
-        project_desc.api_version                   = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
-        project_desc.nx                            = nx;
-        project_desc.ny                            = ny;
-        project_desc.nz                            = nz;
-        project_desc.cell_size                     = cell_size;
-        project_desc.dt                            = dt;
-        project_desc.pressure_iterations           = pressure_iterations;
-        project_desc.temporary_previous_velocity_x = temporary_previous_velocity_x;
-        project_desc.temporary_previous_velocity_y = temporary_previous_velocity_y;
-        project_desc.temporary_previous_velocity_z = temporary_previous_velocity_z;
-        project_desc.temporary_pressure            = temporary_pressure;
-        project_desc.temporary_divergence          = temporary_divergence;
-        project_desc.temporary_omega_x             = temporary_omega_x;
-        project_desc.temporary_omega_y             = temporary_omega_y;
-        project_desc.block_x                       = block_x;
-        project_desc.block_y                       = block_y;
-        project_desc.block_z                       = block_z;
-        project_desc.stream                        = stream;
+        VisualSimulationOfSmokeProjectDesc project_desc{
+            .struct_size                   = sizeof(VisualSimulationOfSmokeProjectDesc),
+            .api_version                   = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx                            = nx,
+            .ny                            = ny,
+            .nz                            = nz,
+            .cell_size                     = cell_size,
+            .dt                            = dt,
+            .pressure_iterations           = pressure_iterations,
+            .temporary_previous_velocity_x = temporary_previous_velocity_x,
+            .temporary_previous_velocity_y = temporary_previous_velocity_y,
+            .temporary_previous_velocity_z = temporary_previous_velocity_z,
+            .temporary_pressure            = temporary_pressure,
+            .temporary_divergence          = temporary_divergence,
+            .temporary_omega_x             = temporary_omega_x,
+            .temporary_omega_y             = temporary_omega_y,
+            .block_x                       = block_x,
+            .block_y                       = block_y,
+            .block_z                       = block_z,
+            .stream                        = stream,
+        };
 
         VisualSimulationOfSmokeScalarFlowBinding scalar_bindings[2] = {
-            VisualSimulationOfSmokeScalarFlowBinding{.scalar = density, .temporary_previous_scalar = temporary_previous_density, .clamp_non_negative = 1u},
-            VisualSimulationOfSmokeScalarFlowBinding{.scalar = temperature, .temporary_previous_scalar = temporary_previous_temperature, .clamp_non_negative = 0u},
+            VisualSimulationOfSmokeScalarFlowBinding{
+                .scalar                    = density,
+                .temporary_previous_scalar = temporary_previous_density,
+                .clamp_non_negative        = 1u,
+            },
+            VisualSimulationOfSmokeScalarFlowBinding{
+                .scalar                    = temperature,
+                .temporary_previous_scalar = temporary_previous_temperature,
+                .clamp_non_negative        = 0u,
+            },
         };
-        VisualSimulationOfSmokeAdvectScalarFlowDesc scalar_flow_desc{};
-        scalar_flow_desc.struct_size         = sizeof(VisualSimulationOfSmokeAdvectScalarFlowDesc);
-        scalar_flow_desc.api_version         = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
-        scalar_flow_desc.nx                  = nx;
-        scalar_flow_desc.ny                  = ny;
-        scalar_flow_desc.nz                  = nz;
-        scalar_flow_desc.cell_size           = cell_size;
-        scalar_flow_desc.dt                  = dt;
-        scalar_flow_desc.use_monotonic_cubic = use_monotonic_cubic;
-        scalar_flow_desc.scalar_bindings     = scalar_bindings;
-        scalar_flow_desc.scalar_count        = 2;
-        scalar_flow_desc.velocity_x          = velocity_x;
-        scalar_flow_desc.velocity_y          = velocity_y;
-        scalar_flow_desc.velocity_z          = velocity_z;
-        scalar_flow_desc.block_x             = block_x;
-        scalar_flow_desc.block_y             = block_y;
-        scalar_flow_desc.block_z             = block_z;
-        scalar_flow_desc.stream              = stream;
+        VisualSimulationOfSmokeAdvectScalarFlowDesc scalar_flow_desc{
+            .struct_size         = sizeof(VisualSimulationOfSmokeAdvectScalarFlowDesc),
+            .api_version         = VISUAL_SIMULATION_OF_SMOKE_API_VERSION,
+            .nx                  = nx,
+            .ny                  = ny,
+            .nz                  = nz,
+            .cell_size           = cell_size,
+            .dt                  = dt,
+            .use_monotonic_cubic = use_monotonic_cubic,
+            .scalar_bindings     = scalar_bindings,
+            .scalar_count        = 2,
+            .velocity_x          = velocity_x,
+            .velocity_y          = velocity_y,
+            .velocity_z          = velocity_z,
+            .block_x             = block_x,
+            .block_y             = block_y,
+            .block_z             = block_z,
+            .stream              = stream,
+        };
 
         if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_forces_cuda(&forces_desc), "visual_simulation_of_smoke_forces_cuda")) exit_code = EXIT_FAILURE;
         if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_advect_velocity_cuda(&advect_velocity_desc), "visual_simulation_of_smoke_advect_velocity_cuda")) exit_code = EXIT_FAILURE;
