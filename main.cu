@@ -8,81 +8,7 @@
 #include <numeric>
 #include <vector>
 
-namespace {
-
-    dim3 make_grid(const int nx, const int ny, const int nz, const dim3& block) {
-        return dim3(static_cast<unsigned>((nx + static_cast<int>(block.x) - 1) / static_cast<int>(block.x)), static_cast<unsigned>((ny + static_cast<int>(block.y) - 1) / static_cast<int>(block.y)), static_cast<unsigned>((nz + static_cast<int>(block.z) - 1) / static_cast<int>(block.z)));
-    }
-
-    __device__ std::uint64_t index_3d(const int x, const int y, const int z, const int sx, const int sy) {
-        return static_cast<std::uint64_t>(z) * static_cast<std::uint64_t>(sx) * static_cast<std::uint64_t>(sy) + static_cast<std::uint64_t>(y) * static_cast<std::uint64_t>(sx) + static_cast<std::uint64_t>(x);
-    }
-
-    __global__ void source_cells_kernel(float* density, float* temperature, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float density_amount, const float temperature_amount) {
-        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
-        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-        if (x >= nx || y >= ny || z >= nz) return;
-
-        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
-        const float radius2 = radius * radius;
-        const float dist2   = dx * dx + dy * dy + dz * dz;
-        if (dist2 > radius2) return;
-
-        const auto index   = index_3d(x, y, z, nx, ny);
-        const float weight = fmaxf(0.0f, 1.0f - dist2 / radius2);
-        density[index] += density_amount * weight;
-        temperature[index] += temperature_amount * weight;
-    }
-
-    __global__ void source_u_kernel(float* velocity_x, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
-        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
-        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-        if (x > nx || y >= ny || z >= nz) return;
-
-        const float dx      = static_cast<float>(x) - center_x;
-        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
-        const float radius2 = radius * radius;
-        const float dist2   = dx * dx + dy * dy + dz * dz;
-        if (dist2 > radius2) return;
-        velocity_x[index_3d(x, y, z, nx + 1, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
-    }
-
-    __global__ void source_v_kernel(float* velocity_y, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
-        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
-        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-        if (x >= nx || y > ny || z >= nz) return;
-
-        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy      = static_cast<float>(y) - center_y;
-        const float dz      = (static_cast<float>(z) + 0.5f) - center_z;
-        const float radius2 = radius * radius;
-        const float dist2   = dx * dx + dy * dy + dz * dz;
-        if (dist2 > radius2) return;
-        velocity_y[index_3d(x, y, z, nx, ny + 1)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
-    }
-
-    __global__ void source_w_kernel(float* velocity_z, const int nx, const int ny, const int nz, const float center_x, const float center_y, const float center_z, const float radius, const float amount) {
-        const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-        const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
-        const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
-        if (x >= nx || y >= ny || z > nz) return;
-
-        const float dx      = (static_cast<float>(x) + 0.5f) - center_x;
-        const float dy      = (static_cast<float>(y) + 0.5f) - center_y;
-        const float dz      = static_cast<float>(z) - center_z;
-        const float radius2 = radius * radius;
-        const float dist2   = dx * dx + dy * dy + dz * dz;
-        if (dist2 > radius2) return;
-        velocity_z[index_3d(x, y, z, nx, ny)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
-    }
-
-} // namespace
+namespace {} // namespace
 
 int main() {
     auto cuda_ok = [](const cudaError_t status, const char* what) {
@@ -169,12 +95,54 @@ int main() {
 
     const auto cuda_begin = std::chrono::steady_clock::now();
     for (int frame = 0; exit_code == EXIT_SUCCESS && frame < frames; ++frame) {
-        const dim3 block{static_cast<unsigned>(block_x), static_cast<unsigned>(block_y), static_cast<unsigned>(block_z)};
-        source_cells_kernel<<<make_grid(nx, ny, nz, block), block, 0, stream>>>(density, temperature, nx, ny, nz, static_cast<float>(nx) * 0.5f, static_cast<float>(ny) * 0.18f, static_cast<float>(nz) * 0.5f, 4.5f, 0.85f, 1.35f);
-        source_u_kernel<<<make_grid(nx + 1, ny, nz, block), block, 0, stream>>>(velocity_x, nx, ny, nz, static_cast<float>(nx) * 0.5f, static_cast<float>(ny) * 0.18f, static_cast<float>(nz) * 0.5f, 4.5f, 0.0f);
-        source_v_kernel<<<make_grid(nx, ny + 1, nz, block), block, 0, stream>>>(velocity_y, nx, ny, nz, static_cast<float>(nx) * 0.5f, static_cast<float>(ny) * 0.18f, static_cast<float>(nz) * 0.5f, 4.5f, 1.2f);
-        source_w_kernel<<<make_grid(nx, ny, nz + 1, block), block, 0, stream>>>(velocity_z, nx, ny, nz, static_cast<float>(nx) * 0.5f, static_cast<float>(ny) * 0.18f, static_cast<float>(nz) * 0.5f, 4.5f, 0.0f);
-        if (!cuda_ok(cudaGetLastError(), "source kernels")) exit_code = EXIT_FAILURE;
+        VisualSimulationOfSmokeAddScalarSourceDesc density_source_desc{};
+        density_source_desc.struct_size = sizeof(VisualSimulationOfSmokeAddScalarSourceDesc);
+        density_source_desc.api_version = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
+        density_source_desc.nx = nx;
+        density_source_desc.ny = ny;
+        density_source_desc.nz = nz;
+        density_source_desc.scalar = density;
+        density_source_desc.center_x = static_cast<float>(nx) * 0.5f;
+        density_source_desc.center_y = static_cast<float>(ny) * 0.18f;
+        density_source_desc.center_z = static_cast<float>(nz) * 0.5f;
+        density_source_desc.radius = 4.5f;
+        density_source_desc.amount = 0.85f;
+        density_source_desc.sample_offset_x = 0.5f;
+        density_source_desc.sample_offset_y = 0.5f;
+        density_source_desc.sample_offset_z = 0.5f;
+        density_source_desc.block_x = block_x;
+        density_source_desc.block_y = block_y;
+        density_source_desc.block_z = block_z;
+        density_source_desc.stream = stream;
+
+        VisualSimulationOfSmokeAddScalarSourceDesc temperature_source_desc = density_source_desc;
+        temperature_source_desc.scalar = temperature;
+        temperature_source_desc.amount = 1.35f;
+
+        VisualSimulationOfSmokeAddVectorSourceDesc velocity_source_desc{};
+        velocity_source_desc.struct_size = sizeof(VisualSimulationOfSmokeAddVectorSourceDesc);
+        velocity_source_desc.api_version = VISUAL_SIMULATION_OF_SMOKE_API_VERSION;
+        velocity_source_desc.nx = nx;
+        velocity_source_desc.ny = ny;
+        velocity_source_desc.nz = nz;
+        velocity_source_desc.vector_x = velocity_x;
+        velocity_source_desc.vector_y = velocity_y;
+        velocity_source_desc.vector_z = velocity_z;
+        velocity_source_desc.center_x = density_source_desc.center_x;
+        velocity_source_desc.center_y = density_source_desc.center_y;
+        velocity_source_desc.center_z = density_source_desc.center_z;
+        velocity_source_desc.radius = density_source_desc.radius;
+        velocity_source_desc.amount_x = 0.0f;
+        velocity_source_desc.amount_y = 1.2f;
+        velocity_source_desc.amount_z = 0.0f;
+        velocity_source_desc.block_x = block_x;
+        velocity_source_desc.block_y = block_y;
+        velocity_source_desc.block_z = block_z;
+        velocity_source_desc.stream = stream;
+
+        if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_add_scalar_source_cuda(&density_source_desc), "visual_simulation_of_smoke_add_scalar_source_cuda(density)")) exit_code = EXIT_FAILURE;
+        if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_add_scalar_source_cuda(&temperature_source_desc), "visual_simulation_of_smoke_add_scalar_source_cuda(temperature)")) exit_code = EXIT_FAILURE;
+        if (exit_code == EXIT_SUCCESS && !smoke_ok(visual_simulation_of_smoke_add_vector_source_cuda(&velocity_source_desc), "visual_simulation_of_smoke_add_vector_source_cuda")) exit_code = EXIT_FAILURE;
 
         VisualSimulationOfSmokeForcesDesc forces_desc{};
         forces_desc.struct_size = sizeof(VisualSimulationOfSmokeForcesDesc);

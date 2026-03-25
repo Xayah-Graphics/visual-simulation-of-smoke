@@ -107,4 +107,22 @@ int32_t visual_simulation_of_smoke_validate_advect_scalars_desc(const VisualSimu
     return 0;
 }
 
+int32_t visual_simulation_of_smoke_validate_add_scalar_source_desc(const VisualSimulationOfSmokeAddScalarSourceDesc* desc) {
+    if (desc == nullptr) return 1000;
+    if (const int32_t code = validate_base(desc->struct_size, sizeof(VisualSimulationOfSmokeAddScalarSourceDesc), desc->api_version); code != 0) return code;
+    if (desc->nx <= 0 || desc->ny <= 0 || desc->nz <= 0) return 1001;
+    if (desc->scalar == nullptr) return 2001;
+    return 0;
+}
+
+int32_t visual_simulation_of_smoke_validate_add_vector_source_desc(const VisualSimulationOfSmokeAddVectorSourceDesc* desc) {
+    if (desc == nullptr) return 1000;
+    if (const int32_t code = validate_base(desc->struct_size, sizeof(VisualSimulationOfSmokeAddVectorSourceDesc), desc->api_version); code != 0) return code;
+    if (desc->nx <= 0 || desc->ny <= 0 || desc->nz <= 0) return 1001;
+    if (desc->vector_x == nullptr) return 2003;
+    if (desc->vector_y == nullptr) return 2004;
+    if (desc->vector_z == nullptr) return 2005;
+    return 0;
+}
+
 } // extern "C"

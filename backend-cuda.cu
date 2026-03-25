@@ -385,6 +385,24 @@ namespace visual_smoke {
             }
         }
 
+        __global__ void add_scalar_source_kernel(float* destination, int sx, int sy, int sz, float center_x, float center_y, float center_z, float radius, float amount, float sample_offset_x, float sample_offset_y, float sample_offset_z) {
+            const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+            const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+            const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
+            if (x >= sx || y >= sy || z >= sz) return;
+
+            const float px = static_cast<float>(x) + sample_offset_x;
+            const float py = static_cast<float>(y) + sample_offset_y;
+            const float pz = static_cast<float>(z) + sample_offset_z;
+            const float dx = px - center_x;
+            const float dy = py - center_y;
+            const float dz = pz - center_z;
+            const float radius2 = radius * radius;
+            const float dist2 = dx * dx + dy * dy + dz * dz;
+            if (dist2 > radius2) return;
+            destination[index_3d(x, y, z, sx, sy)] += amount * fmaxf(0.0f, 1.0f - dist2 / radius2);
+        }
+
         GridHierarchy build_hierarchy(const int base_nx, const int base_ny, const int base_nz, float* base_solution, float* base_rhs, float* coarse_solution_storage, float* coarse_rhs_storage) {
             GridHierarchy hierarchy{.level_count = 1};
             hierarchy.levels[0] = GridLevel{
@@ -552,6 +570,28 @@ int32_t visual_simulation_of_smoke_advect_scalars_cuda(const VisualSimulationOfS
         desc->cell_size, desc->dt, cubic);
     if (cudaGetLastError() != cudaSuccess) return 5001;
     return 0;
+}
+
+int32_t visual_simulation_of_smoke_add_scalar_source_cuda(const VisualSimulationOfSmokeAddScalarSourceDesc* desc) {
+    using namespace visual_smoke;
+    if (const int32_t code = visual_simulation_of_smoke_validate_add_scalar_source_desc(desc); code != 0) return code;
+
+    const dim3 block(static_cast<unsigned>(std::max(desc->block_x, 1)), static_cast<unsigned>(std::max(desc->block_y, 1)), static_cast<unsigned>(std::max(desc->block_z, 1)));
+    const auto stream = static_cast<Stream>(desc->stream);
+    add_scalar_source_kernel<<<make_grid(desc->nx, desc->ny, desc->nz, block), block, 0, stream>>>(static_cast<float*>(desc->scalar), desc->nx, desc->ny, desc->nz, desc->center_x, desc->center_y, desc->center_z, desc->radius, desc->amount, desc->sample_offset_x, desc->sample_offset_y, desc->sample_offset_z);
+    return cudaGetLastError() == cudaSuccess ? 0 : 5001;
+}
+
+int32_t visual_simulation_of_smoke_add_vector_source_cuda(const VisualSimulationOfSmokeAddVectorSourceDesc* desc) {
+    using namespace visual_smoke;
+    if (const int32_t code = visual_simulation_of_smoke_validate_add_vector_source_desc(desc); code != 0) return code;
+
+    const dim3 block(static_cast<unsigned>(std::max(desc->block_x, 1)), static_cast<unsigned>(std::max(desc->block_y, 1)), static_cast<unsigned>(std::max(desc->block_z, 1)));
+    const auto stream = static_cast<Stream>(desc->stream);
+    add_scalar_source_kernel<<<make_grid(desc->nx + 1, desc->ny, desc->nz, block), block, 0, stream>>>(static_cast<float*>(desc->vector_x), desc->nx + 1, desc->ny, desc->nz, desc->center_x, desc->center_y, desc->center_z, desc->radius, desc->amount_x, 0.0f, 0.5f, 0.5f);
+    add_scalar_source_kernel<<<make_grid(desc->nx, desc->ny + 1, desc->nz, block), block, 0, stream>>>(static_cast<float*>(desc->vector_y), desc->nx, desc->ny + 1, desc->nz, desc->center_x, desc->center_y, desc->center_z, desc->radius, desc->amount_y, 0.5f, 0.0f, 0.5f);
+    add_scalar_source_kernel<<<make_grid(desc->nx, desc->ny, desc->nz + 1, block), block, 0, stream>>>(static_cast<float*>(desc->vector_z), desc->nx, desc->ny, desc->nz + 1, desc->center_x, desc->center_y, desc->center_z, desc->radius, desc->amount_z, 0.5f, 0.5f, 0.0f);
+    return cudaGetLastError() == cudaSuccess ? 0 : 5001;
 }
 
 
