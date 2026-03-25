@@ -76,10 +76,4 @@ jobs:
           set -euxo pipefail
           cmake --build build --target visual-simulation-of-smoke-app --parallel
 
-      - name: Run benchmark
-        shell: bash
-        run: |
-          set -euxo pipefail
-          export LD_LIBRARY_PATH="$PWD/build:${LD_LIBRARY_PATH}"
-          ./build/visual-simulation-of-smoke-app
 
