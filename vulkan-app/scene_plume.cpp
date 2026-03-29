@@ -186,6 +186,9 @@ namespace scene_plume {
         if (context_ != nullptr) smoke_simulation_destroy_context_cuda(context_);
         if (density_source_device_ != nullptr) cudaFree(density_source_device_);
         if (temperature_source_device_ != nullptr) cudaFree(temperature_source_device_);
+        if (force_x_device_ != nullptr) cudaFree(force_x_device_);
+        if (force_y_device_ != nullptr) cudaFree(force_y_device_);
+        if (force_z_device_ != nullptr) cudaFree(force_z_device_);
         if (stream_ != nullptr) cudaStreamDestroy(stream_);
     }
 
@@ -223,10 +226,16 @@ namespace scene_plume {
         if (context_ != nullptr) check_smoke(smoke_simulation_destroy_context_cuda(context_), "smoke_simulation_destroy_context_cuda");
         if (density_source_device_ != nullptr) cudaFree(density_source_device_);
         if (temperature_source_device_ != nullptr) cudaFree(temperature_source_device_);
+        if (force_x_device_ != nullptr) cudaFree(force_x_device_);
+        if (force_y_device_ != nullptr) cudaFree(force_y_device_);
+        if (force_z_device_ != nullptr) cudaFree(force_z_device_);
 
         context_                    = nullptr;
         density_source_device_      = nullptr;
         temperature_source_device_  = nullptr;
+        force_x_device_             = nullptr;
+        force_y_device_             = nullptr;
+        force_z_device_             = nullptr;
 
         const SmokeSimulationContextCreateDesc create_desc{
             .config              = config_,
@@ -254,13 +263,17 @@ namespace scene_plume {
 
         density_source_host_.assign(cell_count, 0.0f);
         temperature_source_host_.assign(cell_count, 0.0f);
+        emitter_weight_host_.assign(cell_count, 0.0f);
+        force_x_host_.assign(cell_count, 0.0f);
+        force_y_host_.assign(cell_count, 0.0f);
+        force_z_host_.assign(cell_count, 0.0f);
 
         const float emitter_x = extent_x * 0.50f;
         const float emitter_y = extent_y * 0.10f;
         const float emitter_z = extent_z * 0.50f;
-        const float emitter_rx = extent_x * 0.07f;
-        const float emitter_ry = extent_y * 0.045f;
-        const float emitter_rz = extent_z * 0.07f;
+        const float emitter_rx = extent_x * 0.12f;
+        const float emitter_ry = extent_y * 0.08f;
+        const float emitter_rz = extent_z * 0.12f;
 
         for (int z = 0; z < nz; ++z) {
             for (int y = 0; y < ny; ++y) {
@@ -275,6 +288,7 @@ namespace scene_plume {
                     const float r2   = dx * dx + dy * dy + dz * dz;
                     if (r2 > 1.0f) continue;
                     const float plume = std::exp(-2.2f * r2);
+                    emitter_weight_host_[index]       = plume;
                     density_source_host_[index]     = 18.0f * plume;
                     temperature_source_host_[index] = 34.0f * plume;
                 }
@@ -283,9 +297,15 @@ namespace scene_plume {
 
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&density_source_device_), scalar_bytes), "cudaMalloc density_source_device");
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&temperature_source_device_), scalar_bytes), "cudaMalloc temperature_source_device");
+        check_cuda(cudaMalloc(reinterpret_cast<void**>(&force_x_device_), scalar_bytes), "cudaMalloc force_x_device");
+        check_cuda(cudaMalloc(reinterpret_cast<void**>(&force_y_device_), scalar_bytes), "cudaMalloc force_y_device");
+        check_cuda(cudaMalloc(reinterpret_cast<void**>(&force_z_device_), scalar_bytes), "cudaMalloc force_z_device");
 
         check_cuda(cudaMemcpyAsync(density_source_device_, density_source_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync density_source_device");
         check_cuda(cudaMemcpyAsync(temperature_source_device_, temperature_source_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync temperature_source_device");
+        check_cuda(cudaMemcpyAsync(force_x_device_, force_x_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync force_x_device");
+        check_cuda(cudaMemcpyAsync(force_y_device_, force_y_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync force_y_device");
+        check_cuda(cudaMemcpyAsync(force_z_device_, force_z_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync force_z_device");
 
         info_ = {
             .grid              = grid_,
@@ -298,14 +318,45 @@ namespace scene_plume {
     void Scene::step(const int sim_steps) {
         if (sim_steps <= 0) return;
 
+        constexpr float base_force               = 22.0f;
+        constexpr float min_speed_scale          = 0.82f;
+        constexpr float max_speed_scale          = 1.20f;
+        constexpr float max_lateral_direction    = 0.28f;
+        std::uniform_real_distribution<float> speed_distribution{min_speed_scale, max_speed_scale};
+        std::uniform_real_distribution<float> direction_distribution{-max_lateral_direction, max_lateral_direction};
+
         for (int step_index = 0; step_index < sim_steps; ++step_index) {
             const auto begin = std::chrono::steady_clock::now();
+
+            const float lateral_x = direction_distribution(random_engine_);
+            const float lateral_z = direction_distribution(random_engine_);
+            const float speed     = base_force * speed_distribution(random_engine_);
+            const float direction_length = std::sqrt(lateral_x * lateral_x + 1.0f + lateral_z * lateral_z);
+            const float direction_x      = lateral_x / direction_length;
+            const float direction_y      = 1.0f / direction_length;
+            const float direction_z      = lateral_z / direction_length;
+            const float force_x          = speed * direction_x;
+            const float force_y          = speed * direction_y;
+            const float force_z          = speed * direction_z;
+
+            for (size_t i = 0; i < emitter_weight_host_.size(); ++i) {
+                const float emitter_weight = emitter_weight_host_[i];
+                force_x_host_[i] = emitter_weight * force_x;
+                force_y_host_[i] = emitter_weight * force_y;
+                force_z_host_[i] = emitter_weight * force_z;
+            }
+
+            const auto scalar_bytes = emitter_weight_host_.size() * sizeof(float);
+            check_cuda(cudaMemcpyAsync(force_x_device_, force_x_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync step force_x_device");
+            check_cuda(cudaMemcpyAsync(force_y_device_, force_y_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync step force_y_device");
+            check_cuda(cudaMemcpyAsync(force_z_device_, force_z_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync step force_z_device");
+
             const SmokeSimulationStepDesc step_desc{
                 .density_source     = density_source_device_,
                 .temperature_source = temperature_source_device_,
-                .force_x            = nullptr,
-                .force_y            = nullptr,
-                .force_z            = nullptr,
+                .force_x            = force_x_device_,
+                .force_y            = force_y_device_,
+                .force_z            = force_z_device_,
                 .occupancy          = nullptr,
                 .solid_velocity_x   = nullptr,
                 .solid_velocity_y   = nullptr,

@@ -39,8 +39,8 @@ export namespace scene_plume {
             .dt                          = 1.0f / 90.0f,
             .pressure_iterations         = 160,
             .ambient_temperature         = 0.0f,
-            .buoyancy_density_factor     = 0.16f,
-            .buoyancy_temperature_factor = 1.25f,
+            .buoyancy_density_factor     = 0.8f,
+            .buoyancy_temperature_factor = 0.75f,
             .vorticity_confinement       = 0.20f,
             .scalar_advection_mode       = SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC,
             .boundary =
@@ -60,9 +60,17 @@ export namespace scene_plume {
 
         float* density_source_device_     = nullptr;
         float* temperature_source_device_ = nullptr;
+        float* force_x_device_            = nullptr;
+        float* force_y_device_            = nullptr;
+        float* force_z_device_            = nullptr;
 
         std::vector<float> density_source_host_{};
         std::vector<float> temperature_source_host_{};
+        std::vector<float> emitter_weight_host_{};
+        std::vector<float> force_x_host_{};
+        std::vector<float> force_y_host_{};
+        std::vector<float> force_z_host_{};
+        std::mt19937 random_engine_{std::random_device{}()};
         app::SceneInfo info_{};
     };
 
