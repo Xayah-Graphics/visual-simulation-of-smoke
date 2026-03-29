@@ -1,9 +1,6 @@
 #include "visual-simulation-of-smoke-3d.h"
 
 #include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdint>
 #include <cuda_runtime.h>
 #include <memory>
 #include <new>
@@ -411,64 +408,82 @@ namespace smoke_simulation {
             sample_w_component(w, x, y, z, nx, ny, nz, h, boundary));
     }
 
-    __device__ bool point_inside_domain(const float x, const float y, const float z, const int nx, const int ny, const int nz, const float h) {
-        const float extent_x = static_cast<float>(nx) * h;
-        const float extent_y = static_cast<float>(ny) * h;
-        const float extent_z = static_cast<float>(nz) * h;
-        return x >= 0.0f && x <= extent_x && y >= 0.0f && y <= extent_y && z >= 0.0f && z <= extent_z;
-    }
-
-    __device__ bool is_occupied_world(float3 p, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
-            const float extent_x = static_cast<float>(nx) * h;
-            p.x                  = fmodf(p.x, extent_x);
-            if (p.x < 0.0f) p.x += extent_x;
-        }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
-            const float extent_y = static_cast<float>(ny) * h;
-            p.y                  = fmodf(p.y, extent_y);
-            if (p.y < 0.0f) p.y += extent_y;
-        }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
-            const float extent_z = static_cast<float>(nz) * h;
-            p.z                  = fmodf(p.z, extent_z);
-            if (p.z < 0.0f) p.z += extent_z;
-        }
-        if (!point_inside_domain(p.x, p.y, p.z, nx, ny, nz, h)) return true;
-        if (occupancy == nullptr) return false;
-
-        int x = static_cast<int>(floorf(p.x / h));
-        int y = static_cast<int>(floorf(p.y / h));
-        int z = static_cast<int>(floorf(p.z / h));
-        if (x == nx) x = nx - 1;
-        if (y == ny) y = ny - 1;
-        if (z == nz) z = nz - 1;
-        if (!cell_in_bounds(x, y, z, nx, ny, nz)) return true;
-        return occupancy[cell_index(x, y, z, nx, ny)] != 0;
-    }
-
-    __device__ float3 clip_trace_to_fluid(const float3 start, float3 end, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (!is_occupied_world(end, occupancy, nx, ny, nz, h, boundary)) return end;
-        float lo = 0.0f;
-        float hi = 1.0f;
-        for (int iter = 0; iter < 10; ++iter) {
-            const float mid   = 0.5f * (lo + hi);
-            const float3 test = make_float3(start.x + (end.x - start.x) * mid, start.y + (end.y - start.y) * mid, start.z + (end.z - start.z) * mid);
-            if (is_occupied_world(test, occupancy, nx, ny, nz, h, boundary)) hi = mid;
-            else lo = mid;
-        }
-        end.x = start.x + (end.x - start.x) * lo;
-        end.y = start.y + (end.y - start.y) * lo;
-        end.z = start.z + (end.z - start.z) * lo;
-        return end;
-    }
-
     __device__ float3 trace_particle_rk2(const float3 start, const float* u, const float* v, const float* w, const uint8_t* occupancy, const float dt, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
         const float3 vel0 = sample_mac_velocity(u, v, w, start.x, start.y, start.z, nx, ny, nz, h, boundary);
         const float3 mid  = make_float3(start.x - 0.5f * dt * vel0.x, start.y - 0.5f * dt * vel0.y, start.z - 0.5f * dt * vel0.z);
         const float3 vel1 = sample_mac_velocity(u, v, w, mid.x, mid.y, mid.z, nx, ny, nz, h, boundary);
         float3 traced     = make_float3(start.x - dt * vel1.x, start.y - dt * vel1.y, start.z - dt * vel1.z);
-        return clip_trace_to_fluid(start, traced, occupancy, nx, ny, nz, h, boundary);
+        float end_x       = traced.x;
+        float end_y       = traced.y;
+        float end_z       = traced.z;
+        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+            const float extent_x = static_cast<float>(nx) * h;
+            end_x                = fmodf(end_x, extent_x);
+            if (end_x < 0.0f) end_x += extent_x;
+        }
+        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+            const float extent_y = static_cast<float>(ny) * h;
+            end_y                = fmodf(end_y, extent_y);
+            if (end_y < 0.0f) end_y += extent_y;
+        }
+        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+            const float extent_z = static_cast<float>(nz) * h;
+            end_z                = fmodf(end_z, extent_z);
+            if (end_z < 0.0f) end_z += extent_z;
+        }
+
+        bool traced_hits_solid = end_x < 0.0f || end_x > static_cast<float>(nx) * h || end_y < 0.0f || end_y > static_cast<float>(ny) * h || end_z < 0.0f || end_z > static_cast<float>(nz) * h;
+        if (!traced_hits_solid && occupancy != nullptr) {
+            int end_cell_x = static_cast<int>(floorf(end_x / h));
+            int end_cell_y = static_cast<int>(floorf(end_y / h));
+            int end_cell_z = static_cast<int>(floorf(end_z / h));
+            if (end_cell_x == nx) end_cell_x = nx - 1;
+            if (end_cell_y == ny) end_cell_y = ny - 1;
+            if (end_cell_z == nz) end_cell_z = nz - 1;
+            traced_hits_solid = !cell_in_bounds(end_cell_x, end_cell_y, end_cell_z, nx, ny, nz) || occupancy[cell_index(end_cell_x, end_cell_y, end_cell_z, nx, ny)] != 0;
+        }
+        if (!traced_hits_solid) return traced;
+
+        float lo = 0.0f;
+        float hi = 1.0f;
+        for (int iter = 0; iter < 10; ++iter) {
+            const float mid_t = 0.5f * (lo + hi);
+            float test_x      = start.x + (traced.x - start.x) * mid_t;
+            float test_y      = start.y + (traced.y - start.y) * mid_t;
+            float test_z      = start.z + (traced.z - start.z) * mid_t;
+            if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+                const float extent_x = static_cast<float>(nx) * h;
+                test_x               = fmodf(test_x, extent_x);
+                if (test_x < 0.0f) test_x += extent_x;
+            }
+            if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+                const float extent_y = static_cast<float>(ny) * h;
+                test_y               = fmodf(test_y, extent_y);
+                if (test_y < 0.0f) test_y += extent_y;
+            }
+            if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+                const float extent_z = static_cast<float>(nz) * h;
+                test_z               = fmodf(test_z, extent_z);
+                if (test_z < 0.0f) test_z += extent_z;
+            }
+
+            bool test_hits_solid = test_x < 0.0f || test_x > static_cast<float>(nx) * h || test_y < 0.0f || test_y > static_cast<float>(ny) * h || test_z < 0.0f || test_z > static_cast<float>(nz) * h;
+            if (!test_hits_solid && occupancy != nullptr) {
+                int test_cell_x = static_cast<int>(floorf(test_x / h));
+                int test_cell_y = static_cast<int>(floorf(test_y / h));
+                int test_cell_z = static_cast<int>(floorf(test_z / h));
+                if (test_cell_x == nx) test_cell_x = nx - 1;
+                if (test_cell_y == ny) test_cell_y = ny - 1;
+                if (test_cell_z == nz) test_cell_z = nz - 1;
+                test_hits_solid = !cell_in_bounds(test_cell_x, test_cell_y, test_cell_z, nx, ny, nz) || occupancy[cell_index(test_cell_x, test_cell_y, test_cell_z, nx, ny)] != 0;
+            }
+            if (test_hits_solid) hi = mid_t;
+            else lo = mid_t;
+        }
+        traced.x = start.x + (traced.x - start.x) * lo;
+        traced.y = start.y + (traced.y - start.y) * lo;
+        traced.z = start.z + (traced.z - start.z) * lo;
+        return traced;
     }
 
     __global__ void fill_float_kernel(float* field, const float value, const std::uint64_t count) {
