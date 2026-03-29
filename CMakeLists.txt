@@ -38,7 +38,7 @@ target_sources(
         PUBLIC
         visual-simulation-of-smoke-3d.h
 )
-target_link_libraries(visual-simulation-of-smoke PRIVATE CUDA::cudart CUDA::cublas)
+target_link_libraries(visual-simulation-of-smoke PUBLIC CUDA::cudart)
 target_include_directories(visual-simulation-of-smoke PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(visual-simulation-of-smoke PRIVATE VISUAL_SIMULATION_OF_SMOKE_BUILD_SHARED)
 target_compile_options(visual-simulation-of-smoke PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda --expt-relaxed-constexpr>)

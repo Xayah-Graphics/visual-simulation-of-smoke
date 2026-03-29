@@ -329,79 +329,19 @@ namespace scene_plume {
     void Scene::step(const int sim_steps) {
         if (sim_steps <= 0) return;
 
-        const auto nx           = config_.nx;
-        const auto ny           = config_.ny;
-        const auto nz           = config_.nz;
-        const auto cell_count   = static_cast<size_t>(nx) * static_cast<size_t>(ny) * static_cast<size_t>(nz);
-        const auto scalar_bytes = cell_count * sizeof(float);
-        const float h           = config_.cell_size;
-        const float extent_x    = static_cast<float>(nx) * h;
-        const float extent_y    = static_cast<float>(ny) * h;
-        const float extent_z    = static_cast<float>(nz) * h;
-
-        const float box_center_x = extent_x * 0.50f;
-        const float box_center_y = extent_y * 0.46f;
-        const float box_center_z = extent_z * 0.50f;
-        const float half_x       = extent_x * 0.10f;
-        const float half_y       = extent_y * 0.09f;
-        const float half_z       = extent_z * 0.10f;
-
         for (int step_index = 0; step_index < sim_steps; ++step_index) {
-            std::fill(occupancy_host_.begin(), occupancy_host_.end(), static_cast<uint8_t>(0));
-            std::fill(solid_velocity_x_host_.begin(), solid_velocity_x_host_.end(), 0.0f);
-            std::fill(solid_velocity_y_host_.begin(), solid_velocity_y_host_.end(), 0.0f);
-            std::fill(solid_velocity_z_host_.begin(), solid_velocity_z_host_.end(), 0.0f);
-            std::fill(solid_temperature_host_.begin(), solid_temperature_host_.end(), config_.ambient_temperature);
-
-            const float phase         = static_cast<float>(animation_step_) * 0.035f;
-            const float angle         = phase;
-            const float angular_speed = 1.35f * std::cos(phase * 0.37f);
-            const float c             = std::cos(angle);
-            const float s             = std::sin(angle);
-
-            for (int z = 0; z < nz; ++z) {
-                for (int y = 0; y < ny; ++y) {
-                    for (int x = 0; x < nx; ++x) {
-                        const auto index = static_cast<size_t>(x) + static_cast<size_t>(nx) * (static_cast<size_t>(y) + static_cast<size_t>(ny) * static_cast<size_t>(z));
-                        const float px   = (static_cast<float>(x) + 0.5f) * h;
-                        const float py   = (static_cast<float>(y) + 0.5f) * h;
-                        const float pz   = (static_cast<float>(z) + 0.5f) * h;
-
-                        const float rel_x = px - box_center_x;
-                        const float rel_y = py - box_center_y;
-                        const float rel_z = pz - box_center_z;
-                        const float local_x = c * rel_x + s * rel_z;
-                        const float local_z = -s * rel_x + c * rel_z;
-                        const bool occupied = std::abs(local_x) <= half_x && std::abs(rel_y) <= half_y && std::abs(local_z) <= half_z;
-                        if (!occupied) continue;
-
-                        occupancy_host_[index] = static_cast<uint8_t>(1);
-                        solid_velocity_x_host_[index] = angular_speed * rel_z;
-                        solid_velocity_y_host_[index] = 0.0f;
-                        solid_velocity_z_host_[index] = -angular_speed * rel_x;
-                        solid_temperature_host_[index] = 8.0f;
-                    }
-                }
-            }
-
             const auto begin = std::chrono::steady_clock::now();
-            check_cuda(cudaMemcpyAsync(occupancy_device_, occupancy_host_.data(), cell_count * sizeof(uint8_t), cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync occupancy_device");
-            check_cuda(cudaMemcpyAsync(solid_velocity_x_device_, solid_velocity_x_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync solid_velocity_x_device");
-            check_cuda(cudaMemcpyAsync(solid_velocity_y_device_, solid_velocity_y_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync solid_velocity_y_device");
-            check_cuda(cudaMemcpyAsync(solid_velocity_z_device_, solid_velocity_z_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync solid_velocity_z_device");
-            check_cuda(cudaMemcpyAsync(solid_temperature_device_, solid_temperature_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync solid_temperature_device");
-
             const SmokeSimulationStepDesc step_desc{
                 .density_source     = density_source_device_,
                 .temperature_source = temperature_source_device_,
                 .force_x            = nullptr,
                 .force_y            = nullptr,
                 .force_z            = nullptr,
-                .occupancy          = occupancy_device_,
-                .solid_velocity_x   = solid_velocity_x_device_,
-                .solid_velocity_y   = solid_velocity_y_device_,
-                .solid_velocity_z   = solid_velocity_z_device_,
-                .solid_temperature  = solid_temperature_device_,
+                .occupancy          = nullptr,
+                .solid_velocity_x   = nullptr,
+                .solid_velocity_y   = nullptr,
+                .solid_velocity_z   = nullptr,
+                .solid_temperature  = nullptr,
             };
             check_smoke(smoke_simulation_step_cuda(context_, &step_desc), "smoke_simulation_step_cuda");
             info_.last_step_call_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
