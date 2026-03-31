@@ -54,9 +54,6 @@ typedef struct SmokeSimulationConfig {
     float vorticity_confinement;
     SmokeSimulationScalarAdvectionMode scalar_advection_mode;
     SmokeSimulationBoundaryConfig boundary;
-    int32_t block_x;
-    int32_t block_y;
-    int32_t block_z;
 } SmokeSimulationConfig;
 
 typedef struct SmokeSimulationContext_t* SmokeSimulationContext;
@@ -68,38 +65,60 @@ typedef struct SmokeSimulationContextCreateDesc {
     float initial_temperature;
 } SmokeSimulationContextCreateDesc;
 
-typedef struct SmokeSimulationStepDesc {
-    const float* density_source;
-    const float* temperature_source;
-    const float* force_x;
-    const float* force_y;
-    const float* force_z;
-    const uint8_t* occupancy;
-    const float* solid_velocity_x;
-    const float* solid_velocity_y;
-    const float* solid_velocity_z;
-    const float* solid_temperature;
-} SmokeSimulationStepDesc;
-
-typedef enum SmokeSimulationExportKind {
-    SMOKE_SIMULATION_EXPORT_DENSITY            = 0,
-    SMOKE_SIMULATION_EXPORT_TEMPERATURE        = 1,
-    SMOKE_SIMULATION_EXPORT_PRESSURE           = 2,
-    SMOKE_SIMULATION_EXPORT_DIVERGENCE         = 3,
-    SMOKE_SIMULATION_EXPORT_VELOCITY           = 4,
-    SMOKE_SIMULATION_EXPORT_VELOCITY_MAGNITUDE = 5,
-    SMOKE_SIMULATION_EXPORT_VORTICITY_MAGNITUDE = 6,
-    SMOKE_SIMULATION_EXPORT_OCCUPANCY         = 7,
-} SmokeSimulationExportKind;
-
-typedef struct SmokeSimulationExportDesc {
-    SmokeSimulationExportKind kind;
-} SmokeSimulationExportDesc;
-
 SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulationContextCreateDesc* desc, SmokeSimulationContext* out_context);
 SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_destroy_context_cuda(SmokeSimulationContext context);
-SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_step_cuda(SmokeSimulationContext context, const SmokeSimulationStepDesc* desc);
-SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_export_cuda(SmokeSimulationContext context, const SmokeSimulationExportDesc* desc, void* destination);
+
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_density_cuda(SmokeSimulationContext context, const float* values);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_density_source_cuda(SmokeSimulationContext context, const float* values);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_temperature_cuda(SmokeSimulationContext context, const float* values);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_temperature_source_cuda(SmokeSimulationContext context, const float* values);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_force_cuda(SmokeSimulationContext context, const float* values_x, const float* values_y, const float* values_z);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_occupancy_cuda(SmokeSimulationContext context, const uint8_t* values);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_solid_velocity_cuda(SmokeSimulationContext context, const float* values_x, const float* values_y, const float* values_z);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_update_solid_temperature_cuda(SmokeSimulationContext context, const float* values);
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_step_cuda(SmokeSimulationContext context);
+
+typedef enum SmokeSimulationViewKind {
+    SMOKE_SIMULATION_VIEW_DENSITY              = 0,
+    SMOKE_SIMULATION_VIEW_DENSITY_SOURCE       = 1,
+    SMOKE_SIMULATION_VIEW_TEMPERATURE          = 2,
+    SMOKE_SIMULATION_VIEW_TEMPERATURE_SOURCE   = 3,
+    SMOKE_SIMULATION_VIEW_FORCE                = 4,
+    SMOKE_SIMULATION_VIEW_SOLID_VELOCITY       = 5,
+    SMOKE_SIMULATION_VIEW_SOLID_TEMPERATURE    = 6,
+    SMOKE_SIMULATION_VIEW_FLOW_VELOCITY        = 7,
+    SMOKE_SIMULATION_VIEW_FLOW_VELOCITY_MAGNITUDE = 8,
+    SMOKE_SIMULATION_VIEW_FLOW_PRESSURE        = 9,
+    SMOKE_SIMULATION_VIEW_FLOW_PRESSURE_RHS    = 10,
+    SMOKE_SIMULATION_VIEW_FLOW_DIVERGENCE      = 11,
+    SMOKE_SIMULATION_VIEW_FLOW_VORTICITY       = 12,
+    SMOKE_SIMULATION_VIEW_FLOW_VORTICITY_MAGNITUDE = 13,
+    SMOKE_SIMULATION_VIEW_OCCUPANCY            = 14,
+} SmokeSimulationViewKind;
+
+typedef enum SmokeSimulationViewLayout {
+    SMOKE_SIMULATION_VIEW_LAYOUT_F32_3D      = 0,
+    SMOKE_SIMULATION_VIEW_LAYOUT_F32_3D_SOA3 = 1,
+} SmokeSimulationViewLayout;
+
+typedef struct SmokeSimulationViewRequest {
+    uint32_t kind;
+    void* consumer_stream;
+} SmokeSimulationViewRequest;
+
+typedef struct SmokeSimulationView {
+    uint32_t layout;
+    int32_t nx;
+    int32_t ny;
+    int32_t nz;
+    uint64_t row_stride_bytes;
+    uint64_t slice_stride_bytes;
+    const float* data0;
+    const float* data1;
+    const float* data2;
+} SmokeSimulationView;
+
+SMOKE_SIMULATION_API SmokeSimulationResult smoke_simulation_get_view_cuda(SmokeSimulationContext context, const SmokeSimulationViewRequest* request, SmokeSimulationView* out_view);
 
 #ifdef __cplusplus
 }

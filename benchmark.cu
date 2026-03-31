@@ -99,9 +99,6 @@ int main(int argc, char** argv) {
                 .y = SMOKE_SIMULATION_BOUNDARY_FIXED,
                 .z = SMOKE_SIMULATION_BOUNDARY_PERIODIC,
             },
-        .block_x = 8,
-        .block_y = 8,
-        .block_z = 4,
     };
 
     const auto cell_count   = static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) * static_cast<std::size_t>(nz);
@@ -145,26 +142,13 @@ int main(int argc, char** argv) {
 
     float* density_source_device     = nullptr;
     float* temperature_source_device = nullptr;
-    float* density_export_device     = nullptr;
     if (!check_cuda(cudaMalloc(reinterpret_cast<void**>(&density_source_device), scalar_bytes), "cudaMalloc density_source_device")) return EXIT_FAILURE;
     if (!check_cuda(cudaMalloc(reinterpret_cast<void**>(&temperature_source_device), scalar_bytes), "cudaMalloc temperature_source_device")) return EXIT_FAILURE;
-    if (!check_cuda(cudaMalloc(reinterpret_cast<void**>(&density_export_device), scalar_bytes), "cudaMalloc density_export_device")) return EXIT_FAILURE;
 
     if (!check_cuda(cudaMemcpyAsync(density_source_device, density_source_host.data(), scalar_bytes, cudaMemcpyHostToDevice, stream), "cudaMemcpyAsync density_source")) return EXIT_FAILURE;
     if (!check_cuda(cudaMemcpyAsync(temperature_source_device, temperature_source_host.data(), scalar_bytes, cudaMemcpyHostToDevice, stream), "cudaMemcpyAsync temperature_source")) return EXIT_FAILURE;
-
-    const SmokeSimulationStepDesc step_desc{
-        .density_source    = density_source_device,
-        .temperature_source = temperature_source_device,
-        .force_x           = nullptr,
-        .force_y           = nullptr,
-        .force_z           = nullptr,
-        .occupancy         = nullptr,
-        .solid_velocity_x  = nullptr,
-        .solid_velocity_y  = nullptr,
-        .solid_velocity_z  = nullptr,
-        .solid_temperature = nullptr,
-    };
+    if (!check_smoke(smoke_simulation_update_density_source_cuda(context, density_source_device), "smoke_simulation_update_density_source_cuda")) return EXIT_FAILURE;
+    if (!check_smoke(smoke_simulation_update_temperature_source_cuda(context, temperature_source_device), "smoke_simulation_update_temperature_source_cuda")) return EXIT_FAILURE;
 
     cudaEvent_t step_begin = nullptr;
     cudaEvent_t step_end   = nullptr;
@@ -174,7 +158,7 @@ int main(int argc, char** argv) {
     {
         nvtx3::scoped_range range("benchmark.warmup");
         for (int step = 0; step < warmup_steps; ++step) {
-            if (!check_smoke(smoke_simulation_step_cuda(context, &step_desc), "smoke_simulation_step_cuda warmup")) return EXIT_FAILURE;
+            if (!check_smoke(smoke_simulation_step_cuda(context), "smoke_simulation_step_cuda warmup")) return EXIT_FAILURE;
         }
         if (!check_cuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize warmup")) return EXIT_FAILURE;
     }
@@ -184,7 +168,7 @@ int main(int argc, char** argv) {
         nvtx3::scoped_range range("benchmark.measure");
         if (!check_cuda(cudaEventRecord(step_begin, stream), "cudaEventRecord step_begin")) return EXIT_FAILURE;
         for (int step = 0; step < benchmark_steps; ++step) {
-            if (!check_smoke(smoke_simulation_step_cuda(context, &step_desc), "smoke_simulation_step_cuda")) return EXIT_FAILURE;
+            if (!check_smoke(smoke_simulation_step_cuda(context), "smoke_simulation_step_cuda")) return EXIT_FAILURE;
         }
         if (!check_cuda(cudaEventRecord(step_end, stream), "cudaEventRecord step_end")) return EXIT_FAILURE;
         if (!check_cuda(cudaEventSynchronize(step_end), "cudaEventSynchronize step_end")) return EXIT_FAILURE;
@@ -194,11 +178,13 @@ int main(int argc, char** argv) {
     std::vector<float> density_host(cell_count, 0.0f);
     {
         nvtx3::scoped_range range("benchmark.export");
-        const SmokeSimulationExportDesc export_desc{
-            .kind = SMOKE_SIMULATION_EXPORT_DENSITY,
+        SmokeSimulationView view{};
+        const SmokeSimulationViewRequest view_request{
+            .kind            = SMOKE_SIMULATION_VIEW_DENSITY,
+            .consumer_stream = stream,
         };
-        if (!check_smoke(smoke_simulation_export_cuda(context, &export_desc, density_export_device), "smoke_simulation_export_cuda")) return EXIT_FAILURE;
-        if (!check_cuda(cudaMemcpyAsync(density_host.data(), density_export_device, scalar_bytes, cudaMemcpyDeviceToHost, stream), "cudaMemcpyAsync density_export")) return EXIT_FAILURE;
+        if (!check_smoke(smoke_simulation_get_view_cuda(context, &view_request, &view), "smoke_simulation_get_view_cuda")) return EXIT_FAILURE;
+        if (!check_cuda(cudaMemcpyAsync(density_host.data(), view.data0, scalar_bytes, cudaMemcpyDeviceToHost, stream), "cudaMemcpyAsync density_export")) return EXIT_FAILURE;
         if (!check_cuda(cudaStreamSynchronize(stream), "cudaStreamSynchronize export")) return EXIT_FAILURE;
     }
 
@@ -230,7 +216,6 @@ int main(int argc, char** argv) {
 
     cudaEventDestroy(step_end);
     cudaEventDestroy(step_begin);
-    cudaFree(density_export_device);
     cudaFree(temperature_source_device);
     cudaFree(density_source_device);
     smoke_simulation_destroy_context_cuda(context);

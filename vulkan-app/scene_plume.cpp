@@ -14,7 +14,7 @@ namespace scene_plume {
 
         struct PlumeFieldInfo {
             app::FieldInfo view{};
-            uint32_t export_kind = SMOKE_SIMULATION_EXPORT_DENSITY;
+            uint32_t view_kind = SMOKE_SIMULATION_VIEW_DENSITY;
         };
 
         constexpr std::array field_catalog_storage{
@@ -36,7 +36,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 0.82f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_DENSITY,
+                .view_kind = SMOKE_SIMULATION_VIEW_DENSITY,
             },
             PlumeFieldInfo{
                 .view =
@@ -56,7 +56,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 0.14f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_TEMPERATURE,
+                .view_kind = SMOKE_SIMULATION_VIEW_TEMPERATURE,
             },
             PlumeFieldInfo{
                 .view =
@@ -76,7 +76,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 1.0f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_VELOCITY_MAGNITUDE,
+                .view_kind = SMOKE_SIMULATION_VIEW_FLOW_VELOCITY_MAGNITUDE,
             },
             PlumeFieldInfo{
                 .view =
@@ -96,7 +96,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 0.14f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_VORTICITY_MAGNITUDE,
+                .view_kind = SMOKE_SIMULATION_VIEW_FLOW_VORTICITY_MAGNITUDE,
             },
             PlumeFieldInfo{
                 .view =
@@ -116,7 +116,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 0.16f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_PRESSURE,
+                .view_kind = SMOKE_SIMULATION_VIEW_FLOW_PRESSURE,
             },
             PlumeFieldInfo{
                 .view =
@@ -136,7 +136,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 0.22f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_DIVERGENCE,
+                .view_kind = SMOKE_SIMULATION_VIEW_FLOW_DIVERGENCE,
             },
             PlumeFieldInfo{
                 .view =
@@ -156,7 +156,7 @@ namespace scene_plume {
                                 .scalar_high_b  = 0.12f,
                             },
                     },
-                .export_kind = SMOKE_SIMULATION_EXPORT_OCCUPANCY,
+                .view_kind = SMOKE_SIMULATION_VIEW_OCCUPANCY,
             },
         };
 
@@ -306,6 +306,9 @@ namespace scene_plume {
         check_cuda(cudaMemcpyAsync(force_x_device_, force_x_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync force_x_device");
         check_cuda(cudaMemcpyAsync(force_y_device_, force_y_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync force_y_device");
         check_cuda(cudaMemcpyAsync(force_z_device_, force_z_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync force_z_device");
+        check_smoke(smoke_simulation_update_density_source_cuda(context_, density_source_device_), "smoke_simulation_update_density_source_cuda");
+        check_smoke(smoke_simulation_update_temperature_source_cuda(context_, temperature_source_device_), "smoke_simulation_update_temperature_source_cuda");
+        check_smoke(smoke_simulation_update_force_cuda(context_, force_x_device_, force_y_device_, force_z_device_), "smoke_simulation_update_force_cuda");
 
         info_ = {
             .grid              = grid_,
@@ -350,20 +353,8 @@ namespace scene_plume {
             check_cuda(cudaMemcpyAsync(force_x_device_, force_x_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync step force_x_device");
             check_cuda(cudaMemcpyAsync(force_y_device_, force_y_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync step force_y_device");
             check_cuda(cudaMemcpyAsync(force_z_device_, force_z_host_.data(), scalar_bytes, cudaMemcpyHostToDevice, stream_), "cudaMemcpyAsync step force_z_device");
-
-            const SmokeSimulationStepDesc step_desc{
-                .density_source     = density_source_device_,
-                .temperature_source = temperature_source_device_,
-                .force_x            = force_x_device_,
-                .force_y            = force_y_device_,
-                .force_z            = force_z_device_,
-                .occupancy          = nullptr,
-                .solid_velocity_x   = nullptr,
-                .solid_velocity_y   = nullptr,
-                .solid_velocity_z   = nullptr,
-                .solid_temperature  = nullptr,
-            };
-            check_smoke(smoke_simulation_step_cuda(context_, &step_desc), "smoke_simulation_step_cuda");
+            check_smoke(smoke_simulation_update_force_cuda(context_, force_x_device_, force_y_device_, force_z_device_), "smoke_simulation_update_force_cuda");
+            check_smoke(smoke_simulation_step_cuda(context_), "smoke_simulation_step_cuda");
             info_.last_step_call_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
             ++info_.step_count;
         }
@@ -371,20 +362,33 @@ namespace scene_plume {
 
     void Scene::export_field(const uint32_t field_index, void* const device_destination) const {
         const auto& field = field_catalog_storage[(std::min)(static_cast<size_t>(field_index), field_catalog_storage.size() - 1)];
-        const SmokeSimulationExportDesc export_desc{
-            .kind = static_cast<SmokeSimulationExportKind>(field.export_kind),
+        SmokeSimulationView view{};
+        const SmokeSimulationViewRequest view_request{
+            .kind            = field.view_kind,
+            .consumer_stream = stream_,
         };
-        check_smoke(smoke_simulation_export_cuda(context_, &export_desc, device_destination), "smoke_simulation_export_cuda");
+        check_smoke(smoke_simulation_get_view_cuda(context_, &view_request, &view), "smoke_simulation_get_view_cuda");
+        check_cuda(cudaMemcpyAsync(device_destination, view.data0, static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz) * sizeof(float), cudaMemcpyDeviceToDevice, stream_), "cudaMemcpyAsync export field");
     }
 
     void Scene::export_velocity(void* const device_destination, float* const host_destination) const {
-        const SmokeSimulationExportDesc export_desc{
-            .kind = SMOKE_SIMULATION_EXPORT_VELOCITY,
+        SmokeSimulationView view{};
+        const SmokeSimulationViewRequest view_request{
+            .kind            = SMOKE_SIMULATION_VIEW_FLOW_VELOCITY,
+            .consumer_stream = stream_,
         };
-        check_smoke(smoke_simulation_export_cuda(context_, &export_desc, device_destination), "smoke_simulation_export_cuda");
+        check_smoke(smoke_simulation_get_view_cuda(context_, &view_request, &view), "smoke_simulation_get_view_cuda");
+        const auto scalar_bytes = static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz) * sizeof(float);
+        if (device_destination != nullptr) {
+            auto* destination = static_cast<float*>(device_destination);
+            check_cuda(cudaMemcpyAsync(destination, view.data0, scalar_bytes, cudaMemcpyDeviceToDevice, stream_), "cudaMemcpyAsync velocity_x export");
+            check_cuda(cudaMemcpyAsync(destination + static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz), view.data1, scalar_bytes, cudaMemcpyDeviceToDevice, stream_), "cudaMemcpyAsync velocity_y export");
+            check_cuda(cudaMemcpyAsync(destination + static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz) * 2u, view.data2, scalar_bytes, cudaMemcpyDeviceToDevice, stream_), "cudaMemcpyAsync velocity_z export");
+        }
         if (host_destination == nullptr) return;
-        const auto velocity_bytes = static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz) * 3u * sizeof(float);
-        check_cuda(cudaMemcpyAsync(host_destination, device_destination, velocity_bytes, cudaMemcpyDeviceToHost, stream_), "cudaMemcpyAsync velocity snapshot");
+        check_cuda(cudaMemcpyAsync(host_destination, view.data0, scalar_bytes, cudaMemcpyDeviceToHost, stream_), "cudaMemcpyAsync velocity_x host");
+        check_cuda(cudaMemcpyAsync(host_destination + static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz), view.data1, scalar_bytes, cudaMemcpyDeviceToHost, stream_), "cudaMemcpyAsync velocity_y host");
+        check_cuda(cudaMemcpyAsync(host_destination + static_cast<size_t>(grid_.nx) * static_cast<size_t>(grid_.ny) * static_cast<size_t>(grid_.nz) * 2u, view.data2, scalar_bytes, cudaMemcpyDeviceToHost, stream_), "cudaMemcpyAsync velocity_z host");
     }
 
 } // namespace scene_plume
