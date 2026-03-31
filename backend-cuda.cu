@@ -12,63 +12,66 @@
 
 namespace smoke_simulation {
 
-    struct MacVelocityBuffers {
-        float* u     = nullptr;
-        float* v     = nullptr;
-        float* w     = nullptr;
-        float* u_tmp = nullptr;
-        float* v_tmp = nullptr;
-        float* w_tmp = nullptr;
-
-        float* cell_x = nullptr;
-        float* cell_y = nullptr;
-        float* cell_z = nullptr;
+    enum SmokeFieldKind : uint32_t {
+        SMOKE_FIELD_DENSITY     = 0,
+        SMOKE_FIELD_TEMPERATURE = 1,
     };
 
-    struct ScalarBuffers {
-        float* density         = nullptr;
-        float* density_tmp     = nullptr;
-        float* temperature     = nullptr;
-        float* temperature_tmp = nullptr;
-        float* pressure        = nullptr;
-        float* pressure_rhs    = nullptr;
-        float* divergence      = nullptr;
-        float* vorticity_x     = nullptr;
-        float* vorticity_y     = nullptr;
-        float* vorticity_z     = nullptr;
-        float* vorticity_mag   = nullptr;
-        float* force_x         = nullptr;
-        float* force_y         = nullptr;
-        float* force_z         = nullptr;
-        float* occupancy_float = nullptr;
-        uint8_t* occupancy     = nullptr;
+    struct DeviceBuffers {
+        float* velocity_x            = nullptr;
+        float* velocity_y            = nullptr;
+        float* velocity_z            = nullptr;
+        float* temp_velocity_x       = nullptr;
+        float* temp_velocity_y       = nullptr;
+        float* temp_velocity_z       = nullptr;
+        float* centered_velocity_x   = nullptr;
+        float* centered_velocity_y   = nullptr;
+        float* centered_velocity_z   = nullptr;
+        float* pressure              = nullptr;
+        float* pressure_rhs          = nullptr;
+        float* divergence            = nullptr;
+        float* vorticity_x           = nullptr;
+        float* vorticity_y           = nullptr;
+        float* vorticity_z           = nullptr;
+        float* vorticity_magnitude   = nullptr;
+        float* force_x               = nullptr;
+        float* force_y               = nullptr;
+        float* force_z               = nullptr;
+        float* occupancy_float       = nullptr;
+        uint8_t* occupancy           = nullptr;
+    };
+
+    struct FieldStorage {
+        SmokeFieldKind kind = SMOKE_FIELD_DENSITY;
+        float* data         = nullptr;
+        float* temp         = nullptr;
+    };
+
+    struct StepRuntimeStorage {
+        int pressure_anchor = 0;
+        std::vector<uint8_t> occupancy_host{};
     };
 
     struct ContextStorage {
         SmokeSimulationConfig config{};
+        std::vector<FieldStorage> fields{};
+        DeviceBuffers device{};
+        StepRuntimeStorage step_runtime{};
         cudaStream_t stream = nullptr;
-        bool owns_stream    = false;
-
         dim3 block{};
-        dim3 cell_grid{};
-        dim3 u_grid{};
-        dim3 v_grid{};
-        dim3 w_grid{};
-
-        std::uint64_t cell_count = 0;
-        std::uint64_t u_count    = 0;
-        std::uint64_t v_count    = 0;
-        std::uint64_t w_count    = 0;
-
-        std::size_t cell_bytes = 0;
-        std::size_t u_bytes    = 0;
-        std::size_t v_bytes    = 0;
-        std::size_t w_bytes    = 0;
-
-        MacVelocityBuffers velocity{};
-        ScalarBuffers scalar{};
-        int pressure_anchor = 0;
-        std::vector<uint8_t> occupancy_host{};
+        dim3 cells{};
+        dim3 velocity_x_cells{};
+        dim3 velocity_y_cells{};
+        dim3 velocity_z_cells{};
+        std::uint64_t cell_count       = 0;
+        std::uint64_t velocity_x_count = 0;
+        std::uint64_t velocity_y_count = 0;
+        std::uint64_t velocity_z_count = 0;
+        std::size_t cell_bytes         = 0;
+        std::size_t velocity_x_bytes   = 0;
+        std::size_t velocity_y_bytes   = 0;
+        std::size_t velocity_z_bytes   = 0;
+        bool owns_stream               = false;
     };
 
     void check_cuda(cudaError_t status, const char* what);
@@ -1102,41 +1105,42 @@ namespace smoke_simulation {
         destination[count * 2u + index] = cell_z[index];
     }
 
-    void destroy_buffers(ContextStorage& context) {
+    void destroy_context_buffers(ContextStorage& context) {
         auto free_ptr = [](auto* pointer) {
             if (pointer != nullptr) cudaFree(pointer);
         };
 
-        free_ptr(context.velocity.u);
-        free_ptr(context.velocity.v);
-        free_ptr(context.velocity.w);
-        free_ptr(context.velocity.u_tmp);
-        free_ptr(context.velocity.v_tmp);
-        free_ptr(context.velocity.w_tmp);
-        free_ptr(context.velocity.cell_x);
-        free_ptr(context.velocity.cell_y);
-        free_ptr(context.velocity.cell_z);
-
-        free_ptr(context.scalar.density);
-        free_ptr(context.scalar.density_tmp);
-        free_ptr(context.scalar.temperature);
-        free_ptr(context.scalar.temperature_tmp);
-        free_ptr(context.scalar.pressure);
-        free_ptr(context.scalar.pressure_rhs);
-        free_ptr(context.scalar.divergence);
-        free_ptr(context.scalar.vorticity_x);
-        free_ptr(context.scalar.vorticity_y);
-        free_ptr(context.scalar.vorticity_z);
-        free_ptr(context.scalar.vorticity_mag);
-        free_ptr(context.scalar.force_x);
-        free_ptr(context.scalar.force_y);
-        free_ptr(context.scalar.force_z);
-        free_ptr(context.scalar.occupancy_float);
-        free_ptr(context.scalar.occupancy);
+        free_ptr(context.device.velocity_x);
+        free_ptr(context.device.velocity_y);
+        free_ptr(context.device.velocity_z);
+        free_ptr(context.device.temp_velocity_x);
+        free_ptr(context.device.temp_velocity_y);
+        free_ptr(context.device.temp_velocity_z);
+        free_ptr(context.device.centered_velocity_x);
+        free_ptr(context.device.centered_velocity_y);
+        free_ptr(context.device.centered_velocity_z);
+        free_ptr(context.device.pressure);
+        free_ptr(context.device.pressure_rhs);
+        free_ptr(context.device.divergence);
+        free_ptr(context.device.vorticity_x);
+        free_ptr(context.device.vorticity_y);
+        free_ptr(context.device.vorticity_z);
+        free_ptr(context.device.vorticity_magnitude);
+        free_ptr(context.device.force_x);
+        free_ptr(context.device.force_y);
+        free_ptr(context.device.force_z);
+        free_ptr(context.device.occupancy_float);
+        free_ptr(context.device.occupancy);
+        context.device = DeviceBuffers{};
+        for (auto& field : context.fields) {
+            free_ptr(field.data);
+            free_ptr(field.temp);
+            field.data = nullptr;
+            field.temp = nullptr;
+        }
     }
 
-    void destroy_context_storage(ContextStorage& context) {
-        destroy_buffers(context);
+    void destroy_context_runtime(ContextStorage& context) {
         if (context.owns_stream && context.stream != nullptr) {
             cudaStreamDestroy(context.stream);
             context.stream      = nullptr;
@@ -1158,12 +1162,12 @@ namespace smoke_simulation {
     }
 
     void update_pressure_anchor(ContextStorage& context) {
-        if (context.occupancy_host.size() != context.cell_count) context.occupancy_host.resize(context.cell_count);
-        check_cuda(cudaMemcpy(context.occupancy_host.data(), context.scalar.occupancy, context.cell_count * sizeof(uint8_t), cudaMemcpyDeviceToHost), "cudaMemcpy occupancy_host");
-        context.pressure_anchor = 0;
+        if (context.step_runtime.occupancy_host.size() != context.cell_count) context.step_runtime.occupancy_host.resize(context.cell_count);
+        check_cuda(cudaMemcpy(context.step_runtime.occupancy_host.data(), context.device.occupancy, context.cell_count * sizeof(uint8_t), cudaMemcpyDeviceToHost), "cudaMemcpy occupancy_host");
+        context.step_runtime.pressure_anchor = 0;
         for (std::uint64_t index = 0; index < context.cell_count; ++index) {
-            if (context.occupancy_host[static_cast<std::size_t>(index)] == 0) {
-                context.pressure_anchor = static_cast<int>(index);
+            if (context.step_runtime.occupancy_host[static_cast<std::size_t>(index)] == 0) {
+                context.step_runtime.pressure_anchor = static_cast<int>(index);
                 return;
             }
         }
@@ -1174,9 +1178,9 @@ namespace smoke_simulation {
         const auto solid_velocity_y = desc != nullptr ? desc->solid_velocity_y : nullptr;
         const auto solid_velocity_z = desc != nullptr ? desc->solid_velocity_z : nullptr;
 
-        enforce_u_boundaries_kernel<<<context.u_grid, context.block, 0, context.stream>>>(context.velocity.u, context.scalar.occupancy, solid_velocity_x, context.config.nx, context.config.ny, context.config.nz, context.config.boundary);
-        enforce_v_boundaries_kernel<<<context.v_grid, context.block, 0, context.stream>>>(context.velocity.v, context.scalar.occupancy, solid_velocity_y, context.config.nx, context.config.ny, context.config.nz, context.config.boundary);
-        enforce_w_boundaries_kernel<<<context.w_grid, context.block, 0, context.stream>>>(context.velocity.w, context.scalar.occupancy, solid_velocity_z, context.config.nx, context.config.ny, context.config.nz, context.config.boundary);
+        enforce_u_boundaries_kernel<<<context.velocity_x_cells, context.block, 0, context.stream>>>(context.device.velocity_x, context.device.occupancy, solid_velocity_x, context.config.nx, context.config.ny, context.config.nz, context.config.boundary);
+        enforce_v_boundaries_kernel<<<context.velocity_y_cells, context.block, 0, context.stream>>>(context.device.velocity_y, context.device.occupancy, solid_velocity_y, context.config.nx, context.config.ny, context.config.nz, context.config.boundary);
+        enforce_w_boundaries_kernel<<<context.velocity_z_cells, context.block, 0, context.stream>>>(context.device.velocity_z, context.device.occupancy, solid_velocity_z, context.config.nx, context.config.ny, context.config.nz, context.config.boundary);
         check_cuda(cudaGetLastError(), "enforce_velocity_boundaries_kernel");
 
         if (context.config.boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
@@ -1184,7 +1188,7 @@ namespace smoke_simulation {
                 static_cast<unsigned>((context.config.ny + static_cast<int>(context.block.x) - 1) / static_cast<int>(context.block.x)),
                 static_cast<unsigned>((context.config.nz + static_cast<int>(context.block.y) - 1) / static_cast<int>(context.block.y)),
                 1u);
-            sync_periodic_u_kernel<<<grid, dim3(context.block.x, context.block.y, 1), 0, context.stream>>>(context.velocity.u, context.config.nx, context.config.ny, context.config.nz);
+            sync_periodic_u_kernel<<<grid, dim3(context.block.x, context.block.y, 1), 0, context.stream>>>(context.device.velocity_x, context.config.nx, context.config.ny, context.config.nz);
             check_cuda(cudaGetLastError(), "sync_periodic_u_kernel");
         }
         if (context.config.boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
@@ -1192,7 +1196,7 @@ namespace smoke_simulation {
                 static_cast<unsigned>((context.config.nx + static_cast<int>(context.block.x) - 1) / static_cast<int>(context.block.x)),
                 static_cast<unsigned>((context.config.nz + static_cast<int>(context.block.y) - 1) / static_cast<int>(context.block.y)),
                 1u);
-            sync_periodic_v_kernel<<<grid, dim3(context.block.x, context.block.y, 1), 0, context.stream>>>(context.velocity.v, context.config.nx, context.config.ny, context.config.nz);
+            sync_periodic_v_kernel<<<grid, dim3(context.block.x, context.block.y, 1), 0, context.stream>>>(context.device.velocity_y, context.config.nx, context.config.ny, context.config.nz);
             check_cuda(cudaGetLastError(), "sync_periodic_v_kernel");
         }
         if (context.config.boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
@@ -1200,17 +1204,17 @@ namespace smoke_simulation {
                 static_cast<unsigned>((context.config.nx + static_cast<int>(context.block.x) - 1) / static_cast<int>(context.block.x)),
                 static_cast<unsigned>((context.config.ny + static_cast<int>(context.block.y) - 1) / static_cast<int>(context.block.y)),
                 1u);
-            sync_periodic_w_kernel<<<grid, dim3(context.block.x, context.block.y, 1), 0, context.stream>>>(context.velocity.w, context.config.nx, context.config.ny, context.config.nz);
+            sync_periodic_w_kernel<<<grid, dim3(context.block.x, context.block.y, 1), 0, context.stream>>>(context.device.velocity_z, context.config.nx, context.config.ny, context.config.nz);
             check_cuda(cudaGetLastError(), "sync_periodic_w_kernel");
         }
     }
 
     void solve_pressure(ContextStorage& context) {
-        check_cuda(cudaMemsetAsync(context.scalar.pressure_rhs + context.pressure_anchor, 0, sizeof(float), context.stream), "cudaMemsetAsync pressure_rhs anchor");
+        check_cuda(cudaMemsetAsync(context.device.pressure_rhs + context.step_runtime.pressure_anchor, 0, sizeof(float), context.stream), "cudaMemsetAsync pressure_rhs anchor");
         for (int iteration = 0; iteration < std::max(context.config.pressure_iterations, 1); ++iteration) {
-            rbgs_pressure_kernel<<<context.cell_grid, context.block, 0, context.stream>>>(context.scalar.pressure, context.scalar.pressure_rhs, context.scalar.occupancy, context.pressure_anchor, 0, context.config.nx, context.config.ny, context.config.nz, context.config.cell_size, context.config.boundary);
+            rbgs_pressure_kernel<<<context.cells, context.block, 0, context.stream>>>(context.device.pressure, context.device.pressure_rhs, context.device.occupancy, context.step_runtime.pressure_anchor, 0, context.config.nx, context.config.ny, context.config.nz, context.config.cell_size, context.config.boundary);
             check_cuda(cudaGetLastError(), "rbgs_pressure_kernel red");
-            rbgs_pressure_kernel<<<context.cell_grid, context.block, 0, context.stream>>>(context.scalar.pressure, context.scalar.pressure_rhs, context.scalar.occupancy, context.pressure_anchor, 1, context.config.nx, context.config.ny, context.config.nz, context.config.cell_size, context.config.boundary);
+            rbgs_pressure_kernel<<<context.cells, context.block, 0, context.stream>>>(context.device.pressure, context.device.pressure_rhs, context.device.occupancy, context.step_runtime.pressure_anchor, 1, context.config.nx, context.config.ny, context.config.nz, context.config.cell_size, context.config.boundary);
             check_cuda(cudaGetLastError(), "rbgs_pressure_kernel black");
         }
     }
@@ -1237,21 +1241,28 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             smoke_simulation::check_cuda(cudaStreamCreateWithFlags(&context->stream, cudaStreamNonBlocking), "cudaStreamCreateWithFlags");
             context->owns_stream = true;
         }
-        context->block     = dim3(static_cast<unsigned>(std::max(context->config.block_x, 1)), static_cast<unsigned>(std::max(context->config.block_y, 1)), static_cast<unsigned>(std::max(context->config.block_z, 1)));
-        context->cell_grid = smoke_simulation::grid_for(context->config.nx, context->config.ny, context->config.nz, context->block);
-        context->u_grid    = smoke_simulation::grid_for(context->config.nx + 1, context->config.ny, context->config.nz, context->block);
-        context->v_grid    = smoke_simulation::grid_for(context->config.nx, context->config.ny + 1, context->config.nz, context->block);
-        context->w_grid    = smoke_simulation::grid_for(context->config.nx, context->config.ny, context->config.nz + 1, context->block);
+        context->block            = dim3(static_cast<unsigned>(std::max(context->config.block_x, 1)), static_cast<unsigned>(std::max(context->config.block_y, 1)), static_cast<unsigned>(std::max(context->config.block_z, 1)));
+        context->cells            = smoke_simulation::grid_for(context->config.nx, context->config.ny, context->config.nz, context->block);
+        context->velocity_x_cells = smoke_simulation::grid_for(context->config.nx + 1, context->config.ny, context->config.nz, context->block);
+        context->velocity_y_cells = smoke_simulation::grid_for(context->config.nx, context->config.ny + 1, context->config.nz, context->block);
+        context->velocity_z_cells = smoke_simulation::grid_for(context->config.nx, context->config.ny, context->config.nz + 1, context->block);
 
-        context->cell_count = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz);
-        context->u_count    = static_cast<std::uint64_t>(context->config.nx + 1) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz);
-        context->v_count    = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny + 1) * static_cast<std::uint64_t>(context->config.nz);
-        context->w_count    = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz + 1);
+        context->cell_count       = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz);
+        context->velocity_x_count = static_cast<std::uint64_t>(context->config.nx + 1) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz);
+        context->velocity_y_count = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny + 1) * static_cast<std::uint64_t>(context->config.nz);
+        context->velocity_z_count = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz + 1);
 
-        context->cell_bytes = context->cell_count * sizeof(float);
-        context->u_bytes    = context->u_count * sizeof(float);
-        context->v_bytes    = context->v_count * sizeof(float);
-        context->w_bytes    = context->w_count * sizeof(float);
+        context->cell_bytes       = context->cell_count * sizeof(float);
+        context->velocity_x_bytes = context->velocity_x_count * sizeof(float);
+        context->velocity_y_bytes = context->velocity_y_count * sizeof(float);
+        context->velocity_z_bytes = context->velocity_z_count * sizeof(float);
+        context->fields.reserve(2);
+        context->fields.push_back(smoke_simulation::FieldStorage{
+            .kind = smoke_simulation::SMOKE_FIELD_DENSITY,
+        });
+        context->fields.push_back(smoke_simulation::FieldStorage{
+            .kind = smoke_simulation::SMOKE_FIELD_TEMPERATURE,
+        });
 
         auto alloc_float = [](float** destination, std::size_t bytes) {
             smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(destination), bytes), "cudaMalloc float");
@@ -1260,64 +1271,71 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(destination), bytes), "cudaMalloc uint8");
         };
 
-        alloc_float(&context->velocity.u, context->u_bytes);
-        alloc_float(&context->velocity.v, context->v_bytes);
-        alloc_float(&context->velocity.w, context->w_bytes);
-        alloc_float(&context->velocity.u_tmp, context->u_bytes);
-        alloc_float(&context->velocity.v_tmp, context->v_bytes);
-        alloc_float(&context->velocity.w_tmp, context->w_bytes);
-        alloc_float(&context->velocity.cell_x, context->cell_bytes);
-        alloc_float(&context->velocity.cell_y, context->cell_bytes);
-        alloc_float(&context->velocity.cell_z, context->cell_bytes);
+        {
+            nvtx3::scoped_range alloc_range("smoke.create_context.alloc");
+            alloc_float(&context->device.velocity_x, context->velocity_x_bytes);
+            alloc_float(&context->device.velocity_y, context->velocity_y_bytes);
+            alloc_float(&context->device.velocity_z, context->velocity_z_bytes);
+            alloc_float(&context->device.temp_velocity_x, context->velocity_x_bytes);
+            alloc_float(&context->device.temp_velocity_y, context->velocity_y_bytes);
+            alloc_float(&context->device.temp_velocity_z, context->velocity_z_bytes);
+            alloc_float(&context->device.centered_velocity_x, context->cell_bytes);
+            alloc_float(&context->device.centered_velocity_y, context->cell_bytes);
+            alloc_float(&context->device.centered_velocity_z, context->cell_bytes);
+            alloc_float(&context->device.pressure, context->cell_bytes);
+            alloc_float(&context->device.pressure_rhs, context->cell_bytes);
+            alloc_float(&context->device.divergence, context->cell_bytes);
+            alloc_float(&context->device.vorticity_x, context->cell_bytes);
+            alloc_float(&context->device.vorticity_y, context->cell_bytes);
+            alloc_float(&context->device.vorticity_z, context->cell_bytes);
+            alloc_float(&context->device.vorticity_magnitude, context->cell_bytes);
+            alloc_float(&context->device.force_x, context->cell_bytes);
+            alloc_float(&context->device.force_y, context->cell_bytes);
+            alloc_float(&context->device.force_z, context->cell_bytes);
+            alloc_float(&context->device.occupancy_float, context->cell_bytes);
+            alloc_u8(&context->device.occupancy, context->cell_count * sizeof(uint8_t));
+            for (auto& field : context->fields) {
+                alloc_float(&field.data, context->cell_bytes);
+                alloc_float(&field.temp, context->cell_bytes);
+            }
+        }
 
-        alloc_float(&context->scalar.density, context->cell_bytes);
-        alloc_float(&context->scalar.density_tmp, context->cell_bytes);
-        alloc_float(&context->scalar.temperature, context->cell_bytes);
-        alloc_float(&context->scalar.temperature_tmp, context->cell_bytes);
-        alloc_float(&context->scalar.pressure, context->cell_bytes);
-        alloc_float(&context->scalar.pressure_rhs, context->cell_bytes);
-        alloc_float(&context->scalar.divergence, context->cell_bytes);
-        alloc_float(&context->scalar.vorticity_x, context->cell_bytes);
-        alloc_float(&context->scalar.vorticity_y, context->cell_bytes);
-        alloc_float(&context->scalar.vorticity_z, context->cell_bytes);
-        alloc_float(&context->scalar.vorticity_mag, context->cell_bytes);
-        alloc_float(&context->scalar.force_x, context->cell_bytes);
-        alloc_float(&context->scalar.force_y, context->cell_bytes);
-        alloc_float(&context->scalar.force_z, context->cell_bytes);
-        alloc_float(&context->scalar.occupancy_float, context->cell_bytes);
-        alloc_u8(&context->scalar.occupancy, context->cell_count * sizeof(uint8_t));
-
-        smoke_simulation::launch_fill(context->velocity.u, 0.0f, context->u_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.v, 0.0f, context->v_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.w, 0.0f, context->w_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.u_tmp, 0.0f, context->u_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.v_tmp, 0.0f, context->v_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.w_tmp, 0.0f, context->w_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.cell_x, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.cell_y, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->velocity.cell_z, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.density, desc->initial_density, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.density_tmp, desc->initial_density, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.temperature, desc->initial_temperature, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.temperature_tmp, desc->initial_temperature, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.pressure, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.pressure_rhs, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.divergence, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.vorticity_x, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.vorticity_y, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.vorticity_z, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.vorticity_mag, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.force_x, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.force_y, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.force_z, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::launch_fill(context->scalar.occupancy_float, 0.0f, context->cell_count, context->stream);
-        smoke_simulation::check_cuda(cudaMemsetAsync(context->scalar.occupancy, 0, context->cell_count * sizeof(uint8_t), context->stream), "cudaMemsetAsync occupancy");
+        {
+            nvtx3::scoped_range init_range("smoke.create_context.init");
+            smoke_simulation::launch_fill(context->device.velocity_x, 0.0f, context->velocity_x_count, context->stream);
+            smoke_simulation::launch_fill(context->device.velocity_y, 0.0f, context->velocity_y_count, context->stream);
+            smoke_simulation::launch_fill(context->device.velocity_z, 0.0f, context->velocity_z_count, context->stream);
+            smoke_simulation::launch_fill(context->device.temp_velocity_x, 0.0f, context->velocity_x_count, context->stream);
+            smoke_simulation::launch_fill(context->device.temp_velocity_y, 0.0f, context->velocity_y_count, context->stream);
+            smoke_simulation::launch_fill(context->device.temp_velocity_z, 0.0f, context->velocity_z_count, context->stream);
+            smoke_simulation::launch_fill(context->device.centered_velocity_x, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.centered_velocity_y, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.centered_velocity_z, 0.0f, context->cell_count, context->stream);
+            for (auto& field : context->fields) {
+                const float initial_value = field.kind == smoke_simulation::SMOKE_FIELD_DENSITY ? desc->initial_density : desc->initial_temperature;
+                smoke_simulation::launch_fill(field.data, initial_value, context->cell_count, context->stream);
+                smoke_simulation::launch_fill(field.temp, initial_value, context->cell_count, context->stream);
+            }
+            smoke_simulation::launch_fill(context->device.pressure, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.pressure_rhs, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.divergence, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.vorticity_x, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.vorticity_y, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.vorticity_z, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.vorticity_magnitude, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.force_x, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.force_y, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.force_z, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::launch_fill(context->device.occupancy_float, 0.0f, context->cell_count, context->stream);
+            smoke_simulation::check_cuda(cudaMemsetAsync(context->device.occupancy, 0, context->cell_count * sizeof(uint8_t), context->stream), "cudaMemsetAsync occupancy");
+        }
 
         *out_context = context.release();
         return SMOKE_SIMULATION_RESULT_OK;
     } catch (...) {
         if (context) {
-            smoke_simulation::destroy_context_storage(*context);
+            smoke_simulation::destroy_context_buffers(*context);
+            smoke_simulation::destroy_context_runtime(*context);
         }
         *out_context = nullptr;
         return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
@@ -1328,7 +1346,8 @@ SmokeSimulationResult smoke_simulation_destroy_context_cuda(SmokeSimulationConte
     if (context == nullptr) return SMOKE_SIMULATION_RESULT_OK;
     auto* storage = static_cast<smoke_simulation::ContextStorage*>(context);
     if (storage->stream != nullptr) cudaStreamSynchronize(storage->stream);
-    smoke_simulation::destroy_context_storage(*storage);
+    smoke_simulation::destroy_context_buffers(*storage);
+    smoke_simulation::destroy_context_runtime(*storage);
     delete context;
     return SMOKE_SIMULATION_RESULT_OK;
 }
@@ -1339,83 +1358,98 @@ SmokeSimulationResult smoke_simulation_step_cuda(SmokeSimulationContext context,
 
     try {
         nvtx3::scoped_range range("smoke.step");
-        if (desc != nullptr && desc->occupancy != nullptr) {
-            smoke_simulation::check_cuda(cudaMemcpyAsync(storage.scalar.occupancy, desc->occupancy, storage.cell_count * sizeof(uint8_t), cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync occupancy");
-            smoke_simulation::check_cuda(cudaStreamSynchronize(storage.stream), "cudaStreamSynchronize occupancy");
-            smoke_simulation::update_pressure_anchor(storage);
-        } else {
-            smoke_simulation::check_cuda(cudaMemsetAsync(storage.scalar.occupancy, 0, storage.cell_count * sizeof(uint8_t), storage.stream), "cudaMemsetAsync occupancy");
-            storage.pressure_anchor = 0;
+        auto& density_field     = storage.fields[smoke_simulation::SMOKE_FIELD_DENSITY];
+        auto& temperature_field = storage.fields[smoke_simulation::SMOKE_FIELD_TEMPERATURE];
+
+        {
+            nvtx3::scoped_range bind_range("smoke.step.bind");
+            if (desc != nullptr && desc->occupancy != nullptr) {
+                smoke_simulation::check_cuda(cudaMemcpyAsync(storage.device.occupancy, desc->occupancy, storage.cell_count * sizeof(uint8_t), cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync occupancy");
+                smoke_simulation::check_cuda(cudaStreamSynchronize(storage.stream), "cudaStreamSynchronize occupancy");
+                smoke_simulation::update_pressure_anchor(storage);
+            } else {
+                smoke_simulation::check_cuda(cudaMemsetAsync(storage.device.occupancy, 0, storage.cell_count * sizeof(uint8_t), storage.stream), "cudaMemsetAsync occupancy");
+                storage.step_runtime.pressure_anchor = 0;
+            }
         }
 
-        smoke_simulation::apply_solid_temperature_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.scalar.temperature, storage.scalar.occupancy, desc != nullptr ? desc->solid_temperature : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.ambient_temperature);
-        smoke_simulation::check_cuda(cudaGetLastError(), "apply_solid_temperature_kernel pre");
+        {
+            nvtx3::scoped_range velocity_force_range("smoke.step.velocity_forces");
+            smoke_simulation::apply_solid_temperature_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(temperature_field.data, storage.device.occupancy, desc != nullptr ? desc->solid_temperature : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.ambient_temperature);
+            smoke_simulation::check_cuda(cudaGetLastError(), "apply_solid_temperature_kernel pre");
+            smoke_simulation::compute_center_velocity_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.centered_velocity_x, storage.device.centered_velocity_y, storage.device.centered_velocity_z, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.config.nx, storage.config.ny, storage.config.nz);
+            smoke_simulation::check_cuda(cudaGetLastError(), "compute_center_velocity_kernel");
+            smoke_simulation::compute_vorticity_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.vorticity_x, storage.device.vorticity_y, storage.device.vorticity_z, storage.device.vorticity_magnitude, storage.device.centered_velocity_x, storage.device.centered_velocity_y, storage.device.centered_velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "compute_vorticity_kernel");
+            smoke_simulation::seed_force_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.device.force_x, storage.device.force_y, storage.device.force_z, desc != nullptr ? desc->force_x : nullptr, desc != nullptr ? desc->force_y : nullptr, desc != nullptr ? desc->force_z : nullptr, storage.cell_count);
+            smoke_simulation::check_cuda(cudaGetLastError(), "seed_force_kernel");
+            smoke_simulation::add_buoyancy_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.force_y, density_field.data, temperature_field.data, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.ambient_temperature, storage.config.buoyancy_density_factor, storage.config.buoyancy_temperature_factor, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "add_buoyancy_kernel");
+            smoke_simulation::add_confinement_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.force_x, storage.device.force_y, storage.device.force_z, storage.device.vorticity_x, storage.device.vorticity_y, storage.device.vorticity_z, storage.device.vorticity_magnitude, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.vorticity_confinement, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "add_confinement_kernel");
+            smoke_simulation::add_center_forces_to_u_kernel<<<storage.velocity_x_cells, storage.block, 0, storage.stream>>>(storage.device.velocity_x, storage.device.force_x, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.dt);
+            smoke_simulation::add_center_forces_to_v_kernel<<<storage.velocity_y_cells, storage.block, 0, storage.stream>>>(storage.device.velocity_y, storage.device.force_y, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.dt);
+            smoke_simulation::add_center_forces_to_w_kernel<<<storage.velocity_z_cells, storage.block, 0, storage.stream>>>(storage.device.velocity_z, storage.device.force_z, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.dt);
+            smoke_simulation::check_cuda(cudaGetLastError(), "add_center_forces_to_faces_kernel");
+            smoke_simulation::enforce_velocity_boundaries(storage, desc);
+        }
 
-        smoke_simulation::compute_center_velocity_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.velocity.cell_x, storage.velocity.cell_y, storage.velocity.cell_z, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.config.nx, storage.config.ny, storage.config.nz);
-        smoke_simulation::check_cuda(cudaGetLastError(), "compute_center_velocity_kernel");
+        {
+            nvtx3::scoped_range advect_velocity_range("smoke.step.advect_velocity");
+            smoke_simulation::advect_u_kernel<<<storage.velocity_x_cells, storage.block, 0, storage.stream>>>(storage.device.temp_velocity_x, storage.device.velocity_x, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
+            smoke_simulation::advect_v_kernel<<<storage.velocity_y_cells, storage.block, 0, storage.stream>>>(storage.device.temp_velocity_y, storage.device.velocity_y, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
+            smoke_simulation::advect_w_kernel<<<storage.velocity_z_cells, storage.block, 0, storage.stream>>>(storage.device.temp_velocity_z, storage.device.velocity_z, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "advect_velocity_kernel");
+            std::swap(storage.device.velocity_x, storage.device.temp_velocity_x);
+            std::swap(storage.device.velocity_y, storage.device.temp_velocity_y);
+            std::swap(storage.device.velocity_z, storage.device.temp_velocity_z);
+            smoke_simulation::enforce_velocity_boundaries(storage, desc);
+        }
 
-        smoke_simulation::compute_vorticity_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.vorticity_x, storage.scalar.vorticity_y, storage.scalar.vorticity_z, storage.scalar.vorticity_mag, storage.velocity.cell_x, storage.velocity.cell_y, storage.velocity.cell_z, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "compute_vorticity_kernel");
+        {
+            nvtx3::scoped_range project_range("smoke.step.project");
+            smoke_simulation::compute_pressure_rhs_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.pressure_rhs, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.step_runtime.pressure_anchor, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt);
+            smoke_simulation::check_cuda(cudaGetLastError(), "compute_pressure_rhs_kernel");
+            smoke_simulation::solve_pressure(storage);
+            smoke_simulation::project_u_kernel<<<storage.velocity_x_cells, storage.block, 0, storage.stream>>>(storage.device.velocity_x, storage.device.pressure, storage.device.occupancy, desc != nullptr ? desc->solid_velocity_x : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
+            smoke_simulation::project_v_kernel<<<storage.velocity_y_cells, storage.block, 0, storage.stream>>>(storage.device.velocity_y, storage.device.pressure, storage.device.occupancy, desc != nullptr ? desc->solid_velocity_y : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
+            smoke_simulation::project_w_kernel<<<storage.velocity_z_cells, storage.block, 0, storage.stream>>>(storage.device.velocity_z, storage.device.pressure, storage.device.occupancy, desc != nullptr ? desc->solid_velocity_z : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "project_velocity_kernel");
+            smoke_simulation::enforce_velocity_boundaries(storage, desc);
+        }
 
-        smoke_simulation::seed_force_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.scalar.force_x, storage.scalar.force_y, storage.scalar.force_z, desc != nullptr ? desc->force_x : nullptr, desc != nullptr ? desc->force_y : nullptr, desc != nullptr ? desc->force_z : nullptr, storage.cell_count);
-        smoke_simulation::check_cuda(cudaGetLastError(), "seed_force_kernel");
+        {
+            nvtx3::scoped_range temperature_range("smoke.step.update_temperature");
+            smoke_simulation::add_source_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(temperature_field.temp, temperature_field.data, desc != nullptr ? desc->temperature_source : nullptr, storage.config.dt, storage.cell_count);
+            smoke_simulation::check_cuda(cudaGetLastError(), "add_source_temperature_kernel");
+            smoke_simulation::advect_scalar_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(temperature_field.data, temperature_field.temp, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.scalar_advection_mode, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "advect_temperature_kernel");
+            smoke_simulation::apply_solid_temperature_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(temperature_field.data, storage.device.occupancy, desc != nullptr ? desc->solid_temperature : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.ambient_temperature);
+            smoke_simulation::check_cuda(cudaGetLastError(), "apply_solid_temperature_kernel");
+        }
 
-        smoke_simulation::add_buoyancy_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.force_y, storage.scalar.density, storage.scalar.temperature, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.ambient_temperature, storage.config.buoyancy_density_factor, storage.config.buoyancy_temperature_factor, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "add_buoyancy_kernel");
+        {
+            nvtx3::scoped_range density_range("smoke.step.update_density");
+            smoke_simulation::add_source_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(density_field.temp, density_field.data, desc != nullptr ? desc->density_source : nullptr, storage.config.dt, storage.cell_count);
+            smoke_simulation::check_cuda(cudaGetLastError(), "add_source_density_kernel");
+            smoke_simulation::advect_scalar_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(density_field.data, density_field.temp, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.scalar_advection_mode, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "advect_density_kernel");
+            smoke_simulation::boundary_fill_density_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(density_field.temp, density_field.data, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "boundary_fill_density_kernel");
+            std::swap(density_field.data, density_field.temp);
+        }
 
-        smoke_simulation::add_confinement_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.force_x, storage.scalar.force_y, storage.scalar.force_z, storage.scalar.vorticity_x, storage.scalar.vorticity_y, storage.scalar.vorticity_z, storage.scalar.vorticity_mag, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.vorticity_confinement, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "add_confinement_kernel");
-
-        smoke_simulation::add_center_forces_to_u_kernel<<<storage.u_grid, storage.block, 0, storage.stream>>>(storage.velocity.u, storage.scalar.force_x, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.dt);
-        smoke_simulation::add_center_forces_to_v_kernel<<<storage.v_grid, storage.block, 0, storage.stream>>>(storage.velocity.v, storage.scalar.force_y, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.dt);
-        smoke_simulation::add_center_forces_to_w_kernel<<<storage.w_grid, storage.block, 0, storage.stream>>>(storage.velocity.w, storage.scalar.force_z, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.dt);
-        smoke_simulation::check_cuda(cudaGetLastError(), "add_center_forces_to_faces_kernel");
-
-        smoke_simulation::enforce_velocity_boundaries(storage, desc);
-
-        smoke_simulation::advect_u_kernel<<<storage.u_grid, storage.block, 0, storage.stream>>>(storage.velocity.u_tmp, storage.velocity.u, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
-        smoke_simulation::advect_v_kernel<<<storage.v_grid, storage.block, 0, storage.stream>>>(storage.velocity.v_tmp, storage.velocity.v, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
-        smoke_simulation::advect_w_kernel<<<storage.w_grid, storage.block, 0, storage.stream>>>(storage.velocity.w_tmp, storage.velocity.w, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "advect_velocity_kernel");
-        std::swap(storage.velocity.u, storage.velocity.u_tmp);
-        std::swap(storage.velocity.v, storage.velocity.v_tmp);
-        std::swap(storage.velocity.w, storage.velocity.w_tmp);
-
-        smoke_simulation::enforce_velocity_boundaries(storage, desc);
-
-        smoke_simulation::compute_pressure_rhs_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.pressure_rhs, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.pressure_anchor, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt);
-        smoke_simulation::check_cuda(cudaGetLastError(), "compute_pressure_rhs_kernel");
-        smoke_simulation::solve_pressure(storage);
-
-        smoke_simulation::project_u_kernel<<<storage.u_grid, storage.block, 0, storage.stream>>>(storage.velocity.u, storage.scalar.pressure, storage.scalar.occupancy, desc != nullptr ? desc->solid_velocity_x : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
-        smoke_simulation::project_v_kernel<<<storage.v_grid, storage.block, 0, storage.stream>>>(storage.velocity.v, storage.scalar.pressure, storage.scalar.occupancy, desc != nullptr ? desc->solid_velocity_y : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
-        smoke_simulation::project_w_kernel<<<storage.w_grid, storage.block, 0, storage.stream>>>(storage.velocity.w, storage.scalar.pressure, storage.scalar.occupancy, desc != nullptr ? desc->solid_velocity_z : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "project_velocity_kernel");
-        smoke_simulation::enforce_velocity_boundaries(storage, desc);
-
-        smoke_simulation::add_source_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.scalar.temperature_tmp, storage.scalar.temperature, desc != nullptr ? desc->temperature_source : nullptr, storage.config.dt, storage.cell_count);
-        smoke_simulation::check_cuda(cudaGetLastError(), "add_source_temperature_kernel");
-        smoke_simulation::advect_scalar_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.temperature, storage.scalar.temperature_tmp, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.scalar_advection_mode, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "advect_temperature_kernel");
-        smoke_simulation::apply_solid_temperature_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.scalar.temperature, storage.scalar.occupancy, desc != nullptr ? desc->solid_temperature : nullptr, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.ambient_temperature);
-        smoke_simulation::check_cuda(cudaGetLastError(), "apply_solid_temperature_kernel");
-
-        smoke_simulation::add_source_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.scalar.density_tmp, storage.scalar.density, desc != nullptr ? desc->density_source : nullptr, storage.config.dt, storage.cell_count);
-        smoke_simulation::check_cuda(cudaGetLastError(), "add_source_density_kernel");
-        smoke_simulation::advect_scalar_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.density, storage.scalar.density_tmp, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.dt, storage.config.scalar_advection_mode, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "advect_density_kernel");
-        smoke_simulation::boundary_fill_density_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.density_tmp, storage.scalar.density, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "boundary_fill_density_kernel");
-        std::swap(storage.scalar.density, storage.scalar.density_tmp);
-
-        smoke_simulation::compute_center_velocity_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.velocity.cell_x, storage.velocity.cell_y, storage.velocity.cell_z, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.config.nx, storage.config.ny, storage.config.nz);
-        smoke_simulation::check_cuda(cudaGetLastError(), "compute_center_velocity_kernel final");
-        smoke_simulation::compute_vorticity_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.vorticity_x, storage.scalar.vorticity_y, storage.scalar.vorticity_z, storage.scalar.vorticity_mag, storage.velocity.cell_x, storage.velocity.cell_y, storage.velocity.cell_z, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.boundary);
-        smoke_simulation::check_cuda(cudaGetLastError(), "compute_vorticity_kernel final");
-        smoke_simulation::compute_divergence_kernel<<<storage.cell_grid, storage.block, 0, storage.stream>>>(storage.scalar.divergence, storage.velocity.u, storage.velocity.v, storage.velocity.w, storage.scalar.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size);
-        smoke_simulation::check_cuda(cudaGetLastError(), "compute_divergence_kernel");
-        smoke_simulation::copy_u8_to_float_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.scalar.occupancy_float, storage.scalar.occupancy, storage.cell_count);
-        smoke_simulation::check_cuda(cudaGetLastError(), "copy_u8_to_float_kernel");
+        {
+            nvtx3::scoped_range diagnostics_range("smoke.step.diagnostics");
+            smoke_simulation::compute_center_velocity_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.centered_velocity_x, storage.device.centered_velocity_y, storage.device.centered_velocity_z, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.config.nx, storage.config.ny, storage.config.nz);
+            smoke_simulation::check_cuda(cudaGetLastError(), "compute_center_velocity_kernel final");
+            smoke_simulation::compute_vorticity_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.vorticity_x, storage.device.vorticity_y, storage.device.vorticity_z, storage.device.vorticity_magnitude, storage.device.centered_velocity_x, storage.device.centered_velocity_y, storage.device.centered_velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size, storage.config.boundary);
+            smoke_simulation::check_cuda(cudaGetLastError(), "compute_vorticity_kernel final");
+            smoke_simulation::compute_divergence_kernel<<<storage.cells, storage.block, 0, storage.stream>>>(storage.device.divergence, storage.device.velocity_x, storage.device.velocity_y, storage.device.velocity_z, storage.device.occupancy, storage.config.nx, storage.config.ny, storage.config.nz, storage.config.cell_size);
+            smoke_simulation::check_cuda(cudaGetLastError(), "compute_divergence_kernel");
+            smoke_simulation::copy_u8_to_float_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(storage.device.occupancy_float, storage.device.occupancy, storage.cell_count);
+            smoke_simulation::check_cuda(cudaGetLastError(), "copy_u8_to_float_kernel");
+        }
 
         return SMOKE_SIMULATION_RESULT_OK;
     } catch (...) {
@@ -1428,32 +1462,34 @@ SmokeSimulationResult smoke_simulation_export_cuda(SmokeSimulationContext contex
     auto& storage = *static_cast<smoke_simulation::ContextStorage*>(context);
 
     try {
+        auto& density_field     = storage.fields[smoke_simulation::SMOKE_FIELD_DENSITY];
+        auto& temperature_field = storage.fields[smoke_simulation::SMOKE_FIELD_TEMPERATURE];
         switch (desc->kind) {
         case SMOKE_SIMULATION_EXPORT_DENSITY:
-            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.scalar.density, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync density");
+            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, density_field.data, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync density");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_TEMPERATURE:
-            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.scalar.temperature, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync temperature");
+            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, temperature_field.data, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync temperature");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_PRESSURE:
-            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.scalar.pressure, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync pressure");
+            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.device.pressure, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync pressure");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_DIVERGENCE:
-            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.scalar.divergence, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync divergence");
+            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.device.divergence, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync divergence");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_VELOCITY:
-            smoke_simulation::pack_velocity_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(static_cast<float*>(destination), storage.velocity.cell_x, storage.velocity.cell_y, storage.velocity.cell_z, storage.cell_count);
+            smoke_simulation::pack_velocity_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(static_cast<float*>(destination), storage.device.centered_velocity_x, storage.device.centered_velocity_y, storage.device.centered_velocity_z, storage.cell_count);
             smoke_simulation::check_cuda(cudaGetLastError(), "pack_velocity_kernel");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_VELOCITY_MAGNITUDE:
-            smoke_simulation::compute_velocity_magnitude_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(static_cast<float*>(destination), storage.velocity.cell_x, storage.velocity.cell_y, storage.velocity.cell_z, storage.cell_count);
+            smoke_simulation::compute_velocity_magnitude_kernel<<<static_cast<unsigned>((storage.cell_count + 255u) / 256u), 256, 0, storage.stream>>>(static_cast<float*>(destination), storage.device.centered_velocity_x, storage.device.centered_velocity_y, storage.device.centered_velocity_z, storage.cell_count);
             smoke_simulation::check_cuda(cudaGetLastError(), "compute_velocity_magnitude_kernel");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_VORTICITY_MAGNITUDE:
-            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.scalar.vorticity_mag, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync vorticity_mag");
+            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.device.vorticity_magnitude, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync vorticity_mag");
             return SMOKE_SIMULATION_RESULT_OK;
         case SMOKE_SIMULATION_EXPORT_OCCUPANCY:
-            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.scalar.occupancy_float, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync occupancy");
+            smoke_simulation::check_cuda(cudaMemcpyAsync(destination, storage.device.occupancy_float, storage.cell_bytes, cudaMemcpyDeviceToDevice, storage.stream), "cudaMemcpyAsync occupancy");
             return SMOKE_SIMULATION_RESULT_OK;
         default:
             return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
