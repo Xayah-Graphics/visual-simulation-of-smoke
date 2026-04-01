@@ -201,7 +201,7 @@ namespace scene_plume {
             .view_mode           = app::ViewMode::Volume,
             .plane_axis          = app::PlaneAxis::XY,
             .march_steps         = 128,
-            .slice_position      = 0.42f,
+            .slice_position      = 0.5f,
             .show_velocity_plane = false,
             .background_bottom_r = 0.0f,
             .background_bottom_g = 0.0f,

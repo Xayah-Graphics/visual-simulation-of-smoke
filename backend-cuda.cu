@@ -43,10 +43,8 @@ namespace smoke_simulation {
         bool owns_stream               = false;
 
         struct StepGraphStorage {
-            cudaGraph_t pre_graph     = nullptr;
-            cudaGraphExec_t pre_exec  = nullptr;
-            cudaGraph_t post_graph    = nullptr;
-            cudaGraphExec_t post_exec = nullptr;
+            cudaGraph_t graph    = nullptr;
+            cudaGraphExec_t exec = nullptr;
         } step_graph{};
 
         struct DeviceBuffers {
@@ -1342,7 +1340,7 @@ namespace smoke_simulation {
         divergence[index] = (velocity_x[index_velocity_x(x + 1, y, z, nx, ny)] - velocity_x[index_velocity_x(x, y, z, nx, ny)] + velocity_y[index_velocity_y(x, y + 1, z, nx, ny)] - velocity_y[index_velocity_y(x, y, z, nx, ny)] + velocity_z[index_velocity_z(x, y, z + 1, nx, ny)] - velocity_z[index_velocity_z(x, y, z, nx, ny)]) / h;
     }
 
-    __global__ void build_pressure_matrix_values_kernel(float* values, float* factor_values, const int* row_offsets, const int* column_indices, const int* factor_row_offsets, const int* factor_column_indices, const uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+    __global__ void build_pressure_matrix_kernel(float* values, const int* row_offsets, const int* column_indices, const uint8_t* occupancy, const int* pressure_anchor, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int row = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         if (row >= nx * ny * nz) return;
 
@@ -1410,26 +1408,6 @@ namespace smoke_simulation {
                 }
             }
             values[entry] = value;
-        }
-
-        if (factor_values != nullptr && factor_row_offsets != nullptr && factor_column_indices != nullptr) {
-            for (int entry = factor_row_offsets[row]; entry < factor_row_offsets[row + 1]; ++entry) {
-                const int column = factor_column_indices[entry];
-                float value      = 0.0f;
-                if (special) {
-                    value = column == row ? 1.0f : 0.0f;
-                } else if (column == row) {
-                    value = diagonal;
-                } else {
-                    for (int index = 0; index < active_neighbor_count; ++index) {
-                        if (active_neighbors[index] == column) {
-                            value = -1.0f;
-                            break;
-                        }
-                    }
-                }
-                factor_values[entry] = value;
-            }
         }
     }
 
@@ -1637,14 +1615,10 @@ namespace smoke_simulation {
 
 
     void destroy_context_resources(ContextStorage& context) {
-        if (context.step_graph.pre_exec != nullptr) cudaGraphExecDestroy(context.step_graph.pre_exec);
-        if (context.step_graph.pre_graph != nullptr) cudaGraphDestroy(context.step_graph.pre_graph);
-        if (context.step_graph.post_exec != nullptr) cudaGraphExecDestroy(context.step_graph.post_exec);
-        if (context.step_graph.post_graph != nullptr) cudaGraphDestroy(context.step_graph.post_graph);
-        context.step_graph.pre_exec   = nullptr;
-        context.step_graph.pre_graph  = nullptr;
-        context.step_graph.post_exec  = nullptr;
-        context.step_graph.post_graph = nullptr;
+        if (context.step_graph.exec != nullptr) cudaGraphExecDestroy(context.step_graph.exec);
+        if (context.step_graph.graph != nullptr) cudaGraphDestroy(context.step_graph.graph);
+        context.step_graph.exec  = nullptr;
+        context.step_graph.graph = nullptr;
         if (context.pressure_solver.matrix != nullptr) cusparseDestroySpMat(context.pressure_solver.matrix);
         if (context.pressure_solver.vec_p != nullptr) cusparseDestroyDnVec(context.pressure_solver.vec_p);
         if (context.pressure_solver.vec_ap != nullptr) cusparseDestroyDnVec(context.pressure_solver.vec_ap);
@@ -1811,7 +1785,7 @@ namespace smoke_simulation {
         if (cusparseSpMV_preprocess(context.pressure_solver.cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha, context.pressure_solver.matrix, context.pressure_solver.vec_p, &spmv_beta, context.pressure_solver.vec_ap, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, context.pressure_solver.spmv_buffer) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseSpMV_preprocess");
     }
 
-    void solve_pressure_pcg(ContextStorage& context) {
+    void solve_pressure_cg(ContextStorage& context) {
         auto& flow                    = context.device.flow;
         constexpr unsigned block_size = 256u;
         const unsigned linear_grid    = static_cast<unsigned>((context.cell_count + block_size - 1u) / block_size);
@@ -1821,8 +1795,8 @@ namespace smoke_simulation {
         check_cuda(cudaGetLastError(), "find_pressure_anchor_kernel");
         compute_pressure_rhs_kernel<<<context.cells, context.block, 0, context.stream>>>(flow.pressure_rhs, flow.temp_velocity_x, flow.temp_velocity_y, flow.temp_velocity_z, context.device.occupancy, flow.pressure_anchor, context.config.nx, context.config.ny, context.config.nz, context.config.cell_size, context.config.dt, context.config.flow_boundary);
         check_cuda(cudaGetLastError(), "compute_pressure_rhs_kernel");
-        build_pressure_matrix_values_kernel<<<linear_grid, block_size, 0, context.stream>>>(flow.pressure_values, nullptr, flow.pressure_row_offsets, flow.pressure_column_indices, nullptr, nullptr, context.device.occupancy, flow.pressure_anchor, context.config.nx, context.config.ny, context.config.nz, context.config.flow_boundary);
-        check_cuda(cudaGetLastError(), "build_pressure_matrix_values_kernel");
+        build_pressure_matrix_kernel<<<linear_grid, block_size, 0, context.stream>>>(flow.pressure_values, flow.pressure_row_offsets, flow.pressure_column_indices, context.device.occupancy, flow.pressure_anchor, context.config.nx, context.config.ny, context.config.nz, context.config.flow_boundary);
+        check_cuda(cudaGetLastError(), "build_pressure_matrix_kernel");
         check_cuda(cudaMemsetAsync(flow.pressure, 0, context.cell_bytes, context.stream), "cudaMemsetAsync pressure");
         if (cublasScopy(context.pressure_solver.cublas, static_cast<int>(context.cell_count), flow.pressure_rhs, 1, flow.pcg_r, 1) != CUBLAS_STATUS_SUCCESS) throw std::runtime_error("cublasScopy rhs");
         if (cublasScopy(context.pressure_solver.cublas, static_cast<int>(context.cell_count), flow.pcg_r, 1, flow.pcg_p, 1) != CUBLAS_STATUS_SUCCESS) throw std::runtime_error("cublasScopy pcg_p");
@@ -2023,7 +1997,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
         const bool periodic_y = context->config.flow_boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && context->config.flow_boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC;
         const bool periodic_z = context->config.flow_boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && context->config.flow_boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC;
 
-        smoke_simulation::check_cuda(cudaStreamBeginCapture(context->stream, cudaStreamCaptureModeGlobal), "cudaStreamBeginCapture pre_step");
+        smoke_simulation::check_cuda(cudaStreamBeginCapture(context->stream, cudaStreamCaptureModeGlobal), "cudaStreamBeginCapture step");
         smoke_simulation::apply_solid_temperature_kernel<<<linear_cells, linear_block, 0, context->stream>>>(context->device.scalar_fields[smoke_simulation::SMOKE_FIELD_TEMPERATURE].data, context->device.occupancy, context->device.solid_temperature, context->config.nx, context->config.ny, context->config.nz, context->config.ambient_temperature);
         smoke_simulation::compute_center_velocity_kernel<<<context->cells, context->block, 0, context->stream>>>(context->device.flow.centered_velocity_x, context->device.flow.centered_velocity_y, context->device.flow.centered_velocity_z, context->device.flow.velocity_x, context->device.flow.velocity_y, context->device.flow.velocity_z, context->config.nx, context->config.ny, context->config.nz);
         smoke_simulation::compute_vorticity_kernel<<<context->cells, context->block, 0, context->stream>>>(
@@ -2054,10 +2028,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
         if (periodic_x) smoke_simulation::sync_periodic_velocity_x_kernel<<<sync_velocity_x_grid, sync_block, 0, context->stream>>>(context->device.flow.temp_velocity_x, context->config.nx, context->config.ny, context->config.nz);
         if (periodic_y) smoke_simulation::sync_periodic_velocity_y_kernel<<<sync_velocity_y_grid, sync_block, 0, context->stream>>>(context->device.flow.temp_velocity_y, context->config.nx, context->config.ny, context->config.nz);
         if (periodic_z) smoke_simulation::sync_periodic_velocity_z_kernel<<<sync_velocity_z_grid, sync_block, 0, context->stream>>>(context->device.flow.temp_velocity_z, context->config.nx, context->config.ny, context->config.nz);
-        smoke_simulation::check_cuda(cudaStreamEndCapture(context->stream, &context->step_graph.pre_graph), "cudaStreamEndCapture pre_step");
-        smoke_simulation::check_cuda(cudaGraphInstantiate(&context->step_graph.pre_exec, context->step_graph.pre_graph), "cudaGraphInstantiate pre_step");
-
-        smoke_simulation::check_cuda(cudaStreamBeginCapture(context->stream, cudaStreamCaptureModeGlobal), "cudaStreamBeginCapture post_step");
+        smoke_simulation::solve_pressure_cg(*context);
         smoke_simulation::project_velocity_x_kernel<<<context->velocity_x_cells, context->block, 0, context->stream>>>(context->device.flow.temp_velocity_x, context->device.flow.pressure, context->device.occupancy, context->device.vector_fields[smoke_simulation::SMOKE_VECTOR_SOLID_VELOCITY].data_x, context->config.nx, context->config.ny, context->config.nz, context->config.cell_size, context->config.dt, context->config.flow_boundary);
         smoke_simulation::project_velocity_y_kernel<<<context->velocity_y_cells, context->block, 0, context->stream>>>(context->device.flow.temp_velocity_y, context->device.flow.pressure, context->device.occupancy, context->device.vector_fields[smoke_simulation::SMOKE_VECTOR_SOLID_VELOCITY].data_y, context->config.nx, context->config.ny, context->config.nz, context->config.cell_size, context->config.dt, context->config.flow_boundary);
         smoke_simulation::project_velocity_z_kernel<<<context->velocity_z_cells, context->block, 0, context->stream>>>(context->device.flow.temp_velocity_z, context->device.flow.pressure, context->device.occupancy, context->device.vector_fields[smoke_simulation::SMOKE_VECTOR_SOLID_VELOCITY].data_z, context->config.nx, context->config.ny, context->config.nz, context->config.cell_size, context->config.dt, context->config.flow_boundary);
@@ -2084,8 +2055,8 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             context->device.flow.vorticity_x, context->device.flow.vorticity_y, context->device.flow.vorticity_z, context->device.flow.vorticity_magnitude, context->device.flow.centered_velocity_x, context->device.flow.centered_velocity_y, context->device.flow.centered_velocity_z, context->device.occupancy, context->config.nx, context->config.ny, context->config.nz, context->config.cell_size, context->config.flow_boundary);
         smoke_simulation::compute_divergence_kernel<<<context->cells, context->block, 0, context->stream>>>(context->device.flow.divergence, context->device.flow.velocity_x, context->device.flow.velocity_y, context->device.flow.velocity_z, context->device.occupancy, context->config.nx, context->config.ny, context->config.nz, context->config.cell_size);
         smoke_simulation::velocity_magnitude_kernel<<<linear_cells, linear_block, 0, context->stream>>>(context->device.flow.velocity_magnitude, context->device.flow.centered_velocity_x, context->device.flow.centered_velocity_y, context->device.flow.centered_velocity_z, context->cell_count);
-        smoke_simulation::check_cuda(cudaStreamEndCapture(context->stream, &context->step_graph.post_graph), "cudaStreamEndCapture post_step");
-        smoke_simulation::check_cuda(cudaGraphInstantiate(&context->step_graph.post_exec, context->step_graph.post_graph), "cudaGraphInstantiate post_step");
+        smoke_simulation::check_cuda(cudaStreamEndCapture(context->stream, &context->step_graph.graph), "cudaStreamEndCapture step");
+        smoke_simulation::check_cuda(cudaGraphInstantiate(&context->step_graph.exec, context->step_graph.graph), "cudaGraphInstantiate step");
 
         *out_context = context.release();
         return SMOKE_SIMULATION_RESULT_OK;
@@ -2193,9 +2164,7 @@ SmokeSimulationResult smoke_simulation_step_cuda(SmokeSimulationContext context)
     auto& storage = *static_cast<smoke_simulation::ContextStorage*>(context);
 
     try {
-        smoke_simulation::check_cuda(cudaGraphLaunch(storage.step_graph.pre_exec, storage.stream), "cudaGraphLaunch pre_step");
-        smoke_simulation::solve_pressure_pcg(storage);
-        smoke_simulation::check_cuda(cudaGraphLaunch(storage.step_graph.post_exec, storage.stream), "cudaGraphLaunch post_step");
+        smoke_simulation::check_cuda(cudaGraphLaunch(storage.step_graph.exec, storage.stream), "cudaGraphLaunch step");
         return SMOKE_SIMULATION_RESULT_OK;
     } catch (...) {
         return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
