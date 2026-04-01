@@ -118,10 +118,6 @@ namespace smoke_simulation {
         return static_cast<std::uint64_t>(k) * static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny) + static_cast<std::uint64_t>(j) * static_cast<std::uint64_t>(nx) + static_cast<std::uint64_t>(i);
     }
 
-    dim3 grid_for(const int sx, const int sy, const int sz, const dim3 block) {
-        return {static_cast<unsigned>((sx + static_cast<int>(block.x) - 1) / static_cast<int>(block.x)), static_cast<unsigned>((sy + static_cast<int>(block.y) - 1) / static_cast<int>(block.y)), static_cast<unsigned>((sz + static_cast<int>(block.z) - 1) / static_cast<int>(block.z))};
-    }
-
     __host__ __device__ int wrap_index(int value, const int size) {
         if (size <= 0) return 0;
         value %= size;
@@ -1080,8 +1076,7 @@ namespace smoke_simulation {
         destination[index_velocity_z(i, j, k, nx, ny)] = sample_velocity_z(source, p_x, p_y, p_z, nx, ny, nz, h, boundary);
     }
 
-    __global__ void advect_scalar_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const SmokeSimulationScalarBoundaryConfig scalar_boundary,
-        const SmokeSimulationFlowBoundaryConfig flow_boundary) {
+    __global__ void advect_scalar_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt, const uint32_t advection_mode, const SmokeSimulationScalarBoundaryConfig scalar_boundary, const SmokeSimulationFlowBoundaryConfig flow_boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -1600,51 +1595,48 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             return dim3(block_x, block_y, block_z);
         };
         context->block            = choose_block();
-        context->cells            = smoke_simulation::grid_for(context->config.nx, context->config.ny, context->config.nz, context->block);
-        context->velocity_x_cells = smoke_simulation::grid_for(context->config.nx + 1, context->config.ny, context->config.nz, context->block);
-        context->velocity_y_cells = smoke_simulation::grid_for(context->config.nx, context->config.ny + 1, context->config.nz, context->block);
-        context->velocity_z_cells = smoke_simulation::grid_for(context->config.nx, context->config.ny, context->config.nz + 1, context->block);
+        context->cells            = dim3(static_cast<unsigned>((context->config.nx + static_cast<int>(context->block.x) - 1) / static_cast<int>(context->block.x)), static_cast<unsigned>((context->config.ny + static_cast<int>(context->block.y) - 1) / static_cast<int>(context->block.y)), static_cast<unsigned>((context->config.nz + static_cast<int>(context->block.z) - 1) / static_cast<int>(context->block.z)));
+        context->velocity_x_cells = dim3(static_cast<unsigned>(((context->config.nx + 1) + static_cast<int>(context->block.x) - 1) / static_cast<int>(context->block.x)), static_cast<unsigned>((context->config.ny + static_cast<int>(context->block.y) - 1) / static_cast<int>(context->block.y)), static_cast<unsigned>((context->config.nz + static_cast<int>(context->block.z) - 1) / static_cast<int>(context->block.z)));
+        context->velocity_y_cells = dim3(static_cast<unsigned>((context->config.nx + static_cast<int>(context->block.x) - 1) / static_cast<int>(context->block.x)), static_cast<unsigned>(((context->config.ny + 1) + static_cast<int>(context->block.y) - 1) / static_cast<int>(context->block.y)), static_cast<unsigned>((context->config.nz + static_cast<int>(context->block.z) - 1) / static_cast<int>(context->block.z)));
+        context->velocity_z_cells = dim3(static_cast<unsigned>((context->config.nx + static_cast<int>(context->block.x) - 1) / static_cast<int>(context->block.x)), static_cast<unsigned>((context->config.ny + static_cast<int>(context->block.y) - 1) / static_cast<int>(context->block.y)), static_cast<unsigned>(((context->config.nz + 1) + static_cast<int>(context->block.z) - 1) / static_cast<int>(context->block.z)));
 
         context->device.scalar_fields.push_back(smoke_simulation::ContextStorage::DeviceBuffers::ScalarField{.kind = smoke_simulation::SMOKE_FIELD_DENSITY});
         context->device.scalar_fields.push_back(smoke_simulation::ContextStorage::DeviceBuffers::ScalarField{.kind = smoke_simulation::SMOKE_FIELD_TEMPERATURE});
         context->device.vector_fields.push_back(smoke_simulation::ContextStorage::DeviceBuffers::VectorField{.kind = smoke_simulation::SMOKE_VECTOR_FORCE});
         context->device.vector_fields.push_back(smoke_simulation::ContextStorage::DeviceBuffers::VectorField{.kind = smoke_simulation::SMOKE_VECTOR_SOLID_VELOCITY});
 
-        auto alloc_float = [](float** destination, const std::size_t bytes) { smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(destination), bytes), "cudaMalloc float"); };
-        auto alloc_u8    = [](uint8_t** destination, const std::size_t bytes) { smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(destination), bytes), "cudaMalloc uint8_t"); };
-
-        alloc_float(&context->device.flow.velocity_x, context->velocity_x_bytes);
-        alloc_float(&context->device.flow.velocity_y, context->velocity_y_bytes);
-        alloc_float(&context->device.flow.velocity_z, context->velocity_z_bytes);
-        alloc_float(&context->device.flow.temp_velocity_x, context->velocity_x_bytes);
-        alloc_float(&context->device.flow.temp_velocity_y, context->velocity_y_bytes);
-        alloc_float(&context->device.flow.temp_velocity_z, context->velocity_z_bytes);
-        alloc_float(&context->device.flow.centered_velocity_x, context->cell_bytes);
-        alloc_float(&context->device.flow.centered_velocity_y, context->cell_bytes);
-        alloc_float(&context->device.flow.centered_velocity_z, context->cell_bytes);
-        alloc_float(&context->device.flow.velocity_magnitude, context->cell_bytes);
-        alloc_float(&context->device.flow.pressure, context->cell_bytes);
-        alloc_float(&context->device.flow.pressure_rhs, context->cell_bytes);
-        alloc_float(&context->device.flow.divergence, context->cell_bytes);
-        alloc_float(&context->device.flow.vorticity_x, context->cell_bytes);
-        alloc_float(&context->device.flow.vorticity_y, context->cell_bytes);
-        alloc_float(&context->device.flow.vorticity_z, context->cell_bytes);
-        alloc_float(&context->device.flow.vorticity_magnitude, context->cell_bytes);
-        alloc_float(&context->device.flow.force_x, context->cell_bytes);
-        alloc_float(&context->device.flow.force_y, context->cell_bytes);
-        alloc_float(&context->device.flow.force_z, context->cell_bytes);
-        alloc_float(&context->device.occupancy_float, context->cell_bytes);
-        alloc_u8(&context->device.occupancy, context->cell_count * sizeof(uint8_t));
-        alloc_float(&context->device.solid_temperature, context->cell_bytes);
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.velocity_x), context->velocity_x_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.velocity_y), context->velocity_y_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.velocity_z), context->velocity_z_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.temp_velocity_x), context->velocity_x_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.temp_velocity_y), context->velocity_y_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.temp_velocity_z), context->velocity_z_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.centered_velocity_x), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.centered_velocity_y), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.centered_velocity_z), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.velocity_magnitude), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.pressure), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.pressure_rhs), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.divergence), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.vorticity_x), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.vorticity_y), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.vorticity_z), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.vorticity_magnitude), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.force_x), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.force_y), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.flow.force_z), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.occupancy_float), context->cell_bytes), "cudaMalloc float");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.occupancy), context->cell_count * sizeof(uint8_t)), "cudaMalloc uint8_t");
+        smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&context->device.solid_temperature), context->cell_bytes), "cudaMalloc float");
         for (auto& field : context->device.scalar_fields) {
-            alloc_float(&field.data, context->cell_bytes);
-            alloc_float(&field.temp, context->cell_bytes);
-            alloc_float(&field.source, context->cell_bytes);
+            smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&field.data), context->cell_bytes), "cudaMalloc float");
+            smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&field.temp), context->cell_bytes), "cudaMalloc float");
+            smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&field.source), context->cell_bytes), "cudaMalloc float");
         }
         for (auto& field : context->device.vector_fields) {
-            alloc_float(&field.data_x, context->cell_bytes);
-            alloc_float(&field.data_y, context->cell_bytes);
-            alloc_float(&field.data_z, context->cell_bytes);
+            smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&field.data_x), context->cell_bytes), "cudaMalloc float");
+            smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&field.data_y), context->cell_bytes), "cudaMalloc float");
+            smoke_simulation::check_cuda(cudaMalloc(reinterpret_cast<void**>(&field.data_z), context->cell_bytes), "cudaMalloc float");
         }
 
         const auto linear_grid = static_cast<unsigned>((context->cell_count + 255u) / 256u);
@@ -1696,9 +1688,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             params.kernelParams = arguments;
             return cudaGraphAddKernelNode(&node, context->step_graph.graph, dependencies, dependency_count, &params) == cudaSuccess;
         };
-        auto add_memcpy_node = [&](cudaGraphNode_t& node, const cudaGraphNode_t* dependencies, const std::size_t dependency_count, void* destination, const void* source, const std::size_t bytes) {
-            return cudaGraphAddMemcpyNode1D(&node, context->step_graph.graph, dependencies, dependency_count, destination, source, bytes, cudaMemcpyDeviceToDevice) == cudaSuccess;
-        };
+        auto add_memcpy_node    = [&](cudaGraphNode_t& node, const cudaGraphNode_t* dependencies, const std::size_t dependency_count, void* destination, const void* source, const std::size_t bytes) { return cudaGraphAddMemcpyNode1D(&node, context->step_graph.graph, dependencies, dependency_count, destination, source, bytes, cudaMemcpyDeviceToDevice) == cudaSuccess; };
         auto append_kernel_node = [&](cudaGraphNode_t& tail, void* function, const dim3 grid, const dim3 block, void** arguments) {
             cudaGraphNode_t node = nullptr;
             if (!add_kernel_node(node, tail != nullptr ? &tail : nullptr, tail != nullptr ? 1u : 0u, function, grid, block, arguments)) return false;
