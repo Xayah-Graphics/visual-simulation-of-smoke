@@ -93,11 +93,32 @@ int main(int argc, char** argv) {
         .buoyancy_temperature_factor = buoyancy_temperature,
         .vorticity_confinement      = vorticity_confinement,
         .scalar_advection_mode      = use_cubic_advection ? SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC : SMOKE_SIMULATION_SCALAR_ADVECTION_LINEAR,
-        .boundary =
+        .flow_boundary =
             {
-                .x = SMOKE_SIMULATION_BOUNDARY_PERIODIC,
-                .y = SMOKE_SIMULATION_BOUNDARY_FIXED,
-                .z = SMOKE_SIMULATION_BOUNDARY_PERIODIC,
+                .x_minus = {.type = SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC},
+                .x_plus = {.type = SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC},
+                .y_minus = {.type = SMOKE_SIMULATION_FLOW_BOUNDARY_NO_SLIP_WALL, .velocity_x = 0.0f, .velocity_y = 0.0f, .velocity_z = 0.0f, .pressure = 0.0f},
+                .y_plus = {.type = SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW, .velocity_x = 0.0f, .velocity_y = 0.0f, .velocity_z = 0.0f, .pressure = 0.0f},
+                .z_minus = {.type = SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC},
+                .z_plus = {.type = SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC},
+            },
+        .density_boundary =
+            {
+                .x_minus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = 0.0f},
+                .x_plus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = 0.0f},
+                .y_minus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE, .value = 0.0f},
+                .y_plus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE, .value = 0.0f},
+                .z_minus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = 0.0f},
+                .z_plus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = 0.0f},
+            },
+        .temperature_boundary =
+            {
+                .x_minus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = ambient_temperature},
+                .x_plus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = ambient_temperature},
+                .y_minus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE, .value = ambient_temperature},
+                .y_plus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE, .value = ambient_temperature},
+                .z_minus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = ambient_temperature},
+                .z_plus = {.type = SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC, .value = ambient_temperature},
             },
     };
 

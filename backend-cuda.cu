@@ -137,45 +137,233 @@ namespace smoke_simulation {
         return x >= 0 && x < nx && y >= 0 && y < ny && z >= 0 && z < nz;
     }
 
-    __host__ __device__ bool resolve_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) x = wrap_index(x, nx);
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) y = wrap_index(y, ny);
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) z = wrap_index(z, nz);
+    __host__ __device__ bool resolve_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) x = wrap_index(x, nx);
+        if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) y = wrap_index(y, ny);
+        if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) z = wrap_index(z, nz);
         return cell_in_bounds(x, y, z, nx, ny, nz);
     }
 
-    __device__ bool load_occupancy(const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
+    __host__ __device__ bool resolve_scalar_cell_coordinates(int& x, int& y, int& z, const int nx, const int ny, const int nz, const SmokeSimulationScalarBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) x = wrap_index(x, nx);
+        if (boundary.y_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && ny > 0) y = wrap_index(y, ny);
+        if (boundary.z_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nz > 0) z = wrap_index(z, nz);
+        return cell_in_bounds(x, y, z, nx, ny, nz);
+    }
+
+    __device__ bool load_occupancy(const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
         if (occupancy == nullptr) return false;
         if (!resolve_cell_coordinates(x, y, z, nx, ny, nz, boundary)) return true;
         return occupancy[index_3d(x, y, z, nx, ny)] != 0;
     }
 
-    __device__ float load_scalar(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
-        if (!resolve_cell_coordinates(x, y, z, nx, ny, nz, boundary)) return 0.0f;
+    __device__ float load_scalar(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationScalarBoundaryConfig boundary) {
+        if (x < 0 || x >= nx) {
+            const auto [type, value] = x < 0 ? boundary.x_minus : boundary.x_plus;
+            if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) {
+                x = wrap_index(x, nx);
+            } else if (type == SMOKE_SIMULATION_SCALAR_BOUNDARY_ZERO_FLUX && nx > 0) {
+                x = x < 0 ? 0 : nx - 1;
+            } else {
+                return value;
+            }
+        }
+        if (y < 0 || y >= ny) {
+            const auto [type, value] = y < 0 ? boundary.y_minus : boundary.y_plus;
+            if (boundary.y_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && ny > 0) {
+                y = wrap_index(y, ny);
+            } else if (type == SMOKE_SIMULATION_SCALAR_BOUNDARY_ZERO_FLUX && ny > 0) {
+                y = y < 0 ? 0 : ny - 1;
+            } else {
+                return value;
+            }
+        }
+        if (z < 0 || z >= nz) {
+            const auto [type, value] = z < 0 ? boundary.z_minus : boundary.z_plus;
+            if (boundary.z_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nz > 0) {
+                z = wrap_index(z, nz);
+            } else if (type == SMOKE_SIMULATION_SCALAR_BOUNDARY_ZERO_FLUX && nz > 0) {
+                z = z < 0 ? 0 : nz - 1;
+            } else {
+                return value;
+            }
+        }
         return field[index_3d(x, y, z, nx, ny)];
     }
 
-    __device__ float load_velocity_x(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) i = wrap_index(i, nx);
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) j = wrap_index(j, ny);
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) k = wrap_index(k, nz);
-        if (i < 0 || i > nx || j < 0 || j >= ny || k < 0 || k >= nz) return 0.0f;
+    __device__ float load_flow_cell(const float* field, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (x < 0 || x >= nx) {
+            if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
+                x = wrap_index(x, nx);
+            } else {
+                x = x < 0 ? 0 : nx - 1;
+            }
+        }
+        if (y < 0 || y >= ny) {
+            if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
+                y = wrap_index(y, ny);
+            } else {
+                y = y < 0 ? 0 : ny - 1;
+            }
+        }
+        if (z < 0 || z >= nz) {
+            if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
+                z = wrap_index(z, nz);
+            } else {
+                z = z < 0 ? 0 : nz - 1;
+            }
+        }
+        return field[index_3d(x, y, z, nx, ny)];
+    }
+
+    __device__ float load_center_velocity_component(const float* field, const int component_axis, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (x < 0 || x >= nx) {
+            const auto face = x < 0 ? boundary.x_minus : boundary.x_plus;
+            if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
+                x = wrap_index(x, nx);
+            } else {
+                const float interior = field[index_3d(x < 0 ? 0 : nx - 1, (std::clamp)(y, 0, ny - 1), (std::clamp)(z, 0, nz - 1), nx, ny)];
+                float prescribed = 0.0f;
+                if (component_axis == 0) prescribed = face.velocity_x;
+                if (component_axis == 1) prescribed = face.velocity_y;
+                if (component_axis == 2) prescribed = face.velocity_z;
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) return interior;
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL && component_axis != 0) return interior;
+                return 2.0f * prescribed - interior;
+            }
+        }
+        if (y < 0 || y >= ny) {
+            const auto face = y < 0 ? boundary.y_minus : boundary.y_plus;
+            if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
+                y = wrap_index(y, ny);
+            } else {
+                const float interior = field[index_3d((std::clamp)(x, 0, nx - 1), y < 0 ? 0 : ny - 1, (std::clamp)(z, 0, nz - 1), nx, ny)];
+                float prescribed = 0.0f;
+                if (component_axis == 0) prescribed = face.velocity_x;
+                if (component_axis == 1) prescribed = face.velocity_y;
+                if (component_axis == 2) prescribed = face.velocity_z;
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) return interior;
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL && component_axis != 1) return interior;
+                return 2.0f * prescribed - interior;
+            }
+        }
+        if (z < 0 || z >= nz) {
+            const auto face = z < 0 ? boundary.z_minus : boundary.z_plus;
+            if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
+                z = wrap_index(z, nz);
+            } else {
+                const float interior = field[index_3d((std::clamp)(x, 0, nx - 1), (std::clamp)(y, 0, ny - 1), z < 0 ? 0 : nz - 1, nx, ny)];
+                float prescribed = 0.0f;
+                if (component_axis == 0) prescribed = face.velocity_x;
+                if (component_axis == 1) prescribed = face.velocity_y;
+                if (component_axis == 2) prescribed = face.velocity_z;
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) return interior;
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL && component_axis != 2) return interior;
+                return 2.0f * prescribed - interior;
+            }
+        }
+        return field[index_3d(x, y, z, nx, ny)];
+    }
+
+    __device__ float load_velocity_x(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (i < 0 || i > nx) {
+            const auto face = i < 0 ? boundary.x_minus : boundary.x_plus;
+            if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
+                i = wrap_index(i, nx);
+            } else {
+                const float interior = field[index_velocity_x(i < 0 ? 0 : nx, (std::clamp)(j, 0, ny - 1), (std::clamp)(k, 0, nz - 1), nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) return interior;
+                return 2.0f * face.velocity_x - interior;
+            }
+        }
+        if (j < 0 || j >= ny) {
+            const auto face = j < 0 ? boundary.y_minus : boundary.y_plus;
+            if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
+                j = wrap_index(j, ny);
+            } else {
+                const float interior = field[index_velocity_x((std::clamp)(i, 0, nx), j < 0 ? 0 : ny - 1, (std::clamp)(k, 0, nz - 1), nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL) return interior;
+                return 2.0f * face.velocity_x - interior;
+            }
+        }
+        if (k < 0 || k >= nz) {
+            const auto face = k < 0 ? boundary.z_minus : boundary.z_plus;
+            if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
+                k = wrap_index(k, nz);
+            } else {
+                const float interior = field[index_velocity_x((std::clamp)(i, 0, nx), (std::clamp)(j, 0, ny - 1), k < 0 ? 0 : nz - 1, nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL) return interior;
+                return 2.0f * face.velocity_x - interior;
+            }
+        }
         return field[index_velocity_x(i, j, k, nx, ny)];
     }
 
-    __device__ float load_velocity_y(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) i = wrap_index(i, nx);
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) j = wrap_index(j, ny);
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) k = wrap_index(k, nz);
-        if (i < 0 || i >= nx || j < 0 || j > ny || k < 0 || k >= nz) return 0.0f;
+    __device__ float load_velocity_y(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (i < 0 || i >= nx) {
+            const auto face = i < 0 ? boundary.x_minus : boundary.x_plus;
+            if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
+                i = wrap_index(i, nx);
+            } else {
+                const float interior = field[index_velocity_y(i < 0 ? 0 : nx - 1, (std::clamp)(j, 0, ny), (std::clamp)(k, 0, nz - 1), nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL) return interior;
+                return 2.0f * face.velocity_y - interior;
+            }
+        }
+        if (j < 0 || j > ny) {
+            const auto face = j < 0 ? boundary.y_minus : boundary.y_plus;
+            if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
+                j = wrap_index(j, ny);
+            } else {
+                const float interior = field[index_velocity_y((std::clamp)(i, 0, nx - 1), j < 0 ? 0 : ny, (std::clamp)(k, 0, nz - 1), nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) return interior;
+                return 2.0f * face.velocity_y - interior;
+            }
+        }
+        if (k < 0 || k >= nz) {
+            const auto face = k < 0 ? boundary.z_minus : boundary.z_plus;
+            if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
+                k = wrap_index(k, nz);
+            } else {
+                const float interior = field[index_velocity_y((std::clamp)(i, 0, nx - 1), (std::clamp)(j, 0, ny), k < 0 ? 0 : nz - 1, nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL) return interior;
+                return 2.0f * face.velocity_y - interior;
+            }
+        }
         return field[index_velocity_y(i, j, k, nx, ny)];
     }
 
-    __device__ float load_velocity_z(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) i = wrap_index(i, nx);
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) j = wrap_index(j, ny);
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) k = wrap_index(k, nz);
-        if (i < 0 || i >= nx || j < 0 || j >= ny || k < 0 || k > nz) return 0.0f;
+    __device__ float load_velocity_z(const float* field, int i, int j, int k, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (i < 0 || i >= nx) {
+            const auto face = i < 0 ? boundary.x_minus : boundary.x_plus;
+            if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
+                i = wrap_index(i, nx);
+            } else {
+                const float interior = field[index_velocity_z(i < 0 ? 0 : nx - 1, (std::clamp)(j, 0, ny - 1), (std::clamp)(k, 0, nz), nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL) return interior;
+                return 2.0f * face.velocity_z - interior;
+            }
+        }
+        if (j < 0 || j >= ny) {
+            const auto face = j < 0 ? boundary.y_minus : boundary.y_plus;
+            if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
+                j = wrap_index(j, ny);
+            } else {
+                const float interior = field[index_velocity_z((std::clamp)(i, 0, nx - 1), j < 0 ? 0 : ny - 1, (std::clamp)(k, 0, nz), nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL) return interior;
+                return 2.0f * face.velocity_z - interior;
+            }
+        }
+        if (k < 0 || k > nz) {
+            const auto face = k < 0 ? boundary.z_minus : boundary.z_plus;
+            if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
+                k = wrap_index(k, nz);
+            } else {
+                const float interior = field[index_velocity_z((std::clamp)(i, 0, nx - 1), (std::clamp)(j, 0, ny - 1), k < 0 ? 0 : nz, nx, ny)];
+                if (face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) return interior;
+                return 2.0f * face.velocity_z - interior;
+            }
+        }
         return field[index_velocity_z(i, j, k, nx, ny)];
     }
 
@@ -195,18 +383,18 @@ namespace smoke_simulation {
         return (2.0f * t3 - 3.0f * t2 + 1.0f) * p1 + (t3 - 2.0f * t2 + t) * m1 + (-2.0f * t3 + 3.0f * t2) * p2 + (t3 - t2) * m2;
     }
 
-    __device__ float sample_scalar_linear(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+    __device__ float sample_scalar_linear(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationScalarBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
             if (x < 0.0f) x += extent_x;
         }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+        if (boundary.y_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && ny > 0) {
             const float extent_y = static_cast<float>(ny) * h;
             y                    = fmodf(y, extent_y);
             if (y < 0.0f) y += extent_y;
         }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+        if (boundary.z_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nz > 0) {
             const float extent_z = static_cast<float>(nz) * h;
             z                    = fmodf(z, extent_z);
             if (z < 0.0f) z += extent_z;
@@ -243,18 +431,18 @@ namespace smoke_simulation {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_scalar_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+    __device__ float sample_scalar_cubic(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationScalarBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
             if (x < 0.0f) x += extent_x;
         }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+        if (boundary.y_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && ny > 0) {
             const float extent_y = static_cast<float>(ny) * h;
             y                    = fmodf(y, extent_y);
             if (y < 0.0f) y += extent_y;
         }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+        if (boundary.z_minus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC && nz > 0) {
             const float extent_z = static_cast<float>(nz) * h;
             z                    = fmodf(z, extent_z);
             if (z < 0.0f) z += extent_z;
@@ -287,18 +475,18 @@ namespace smoke_simulation {
         return monotonic_cubic_1d(z_samples[0], z_samples[1], z_samples[2], z_samples[3], tz);
     }
 
-    __device__ float sample_velocity_x(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+    __device__ float sample_velocity_x(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
             if (x < 0.0f) x += extent_x;
         }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+        if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
             const float extent_y = static_cast<float>(ny) * h;
             y                    = fmodf(y, extent_y);
             if (y < 0.0f) y += extent_y;
         }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+        if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
             const float extent_z = static_cast<float>(nz) * h;
             z                    = fmodf(z, extent_z);
             if (z < 0.0f) z += extent_z;
@@ -335,18 +523,18 @@ namespace smoke_simulation {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_velocity_y(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+    __device__ float sample_velocity_y(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
             if (x < 0.0f) x += extent_x;
         }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+        if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
             const float extent_y = static_cast<float>(ny) * h;
             y                    = fmodf(y, extent_y);
             if (y < 0.0f) y += extent_y;
         }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+        if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
             const float extent_z = static_cast<float>(nz) * h;
             z                    = fmodf(z, extent_z);
             if (z < 0.0f) z += extent_z;
@@ -383,18 +571,18 @@ namespace smoke_simulation {
         return c0 + (c1 - c0) * tz;
     }
 
-    __device__ float sample_velocity_z(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+    __device__ float sample_velocity_z(const float* field, float x, float y, float z, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             x                    = fmodf(x, extent_x);
             if (x < 0.0f) x += extent_x;
         }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+        if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
             const float extent_y = static_cast<float>(ny) * h;
             y                    = fmodf(y, extent_y);
             if (y < 0.0f) y += extent_y;
         }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+        if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
             const float extent_z = static_cast<float>(nz) * h;
             z                    = fmodf(z, extent_z);
             if (z < 0.0f) z += extent_z;
@@ -432,7 +620,7 @@ namespace smoke_simulation {
     }
 
     __device__ float3 sample_velocity(const float* velocity_x, const float* velocity_y, const float* velocity_z, const float x, const float y, const float z, const int nx, const int ny, const int nz, const float h,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         return make_float3(
             sample_velocity_x(velocity_x, x, y, z, nx, ny, nz, h, boundary),
             sample_velocity_y(velocity_y, x, y, z, nx, ny, nz, h, boundary),
@@ -440,7 +628,7 @@ namespace smoke_simulation {
     }
 
     __device__ float3 trace_particle_rk2(const float3 start, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const float dt, const int nx, const int ny, const int nz, const float h,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         const float3 velocity0 = sample_velocity(velocity_x, velocity_y, velocity_z, start.x, start.y, start.z, nx, ny, nz, h, boundary);
         const float3 mid       = make_float3(start.x - 0.5f * dt * velocity0.x, start.y - 0.5f * dt * velocity0.y, start.z - 0.5f * dt * velocity0.z);
         const float3 velocity1 = sample_velocity(velocity_x, velocity_y, velocity_z, mid.x, mid.y, mid.z, nx, ny, nz, h, boundary);
@@ -448,17 +636,17 @@ namespace smoke_simulation {
         float end_x            = traced.x;
         float end_y            = traced.y;
         float end_z            = traced.z;
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+        if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
             const float extent_x = static_cast<float>(nx) * h;
             end_x                = fmodf(end_x, extent_x);
             if (end_x < 0.0f) end_x += extent_x;
         }
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+        if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
             const float extent_y = static_cast<float>(ny) * h;
             end_y                = fmodf(end_y, extent_y);
             if (end_y < 0.0f) end_y += extent_y;
         }
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+        if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
             const float extent_z = static_cast<float>(nz) * h;
             end_z                = fmodf(end_z, extent_z);
             if (end_z < 0.0f) end_z += extent_z;
@@ -483,17 +671,17 @@ namespace smoke_simulation {
             float test_x      = start.x + (traced.x - start.x) * mid_t;
             float test_y      = start.y + (traced.y - start.y) * mid_t;
             float test_z      = start.z + (traced.z - start.z) * mid_t;
-            if (boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nx > 0) {
+            if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) {
                 const float extent_x = static_cast<float>(nx) * h;
                 test_x               = fmodf(test_x, extent_x);
                 if (test_x < 0.0f) test_x += extent_x;
             }
-            if (boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC && ny > 0) {
+            if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) {
                 const float extent_y = static_cast<float>(ny) * h;
                 test_y               = fmodf(test_y, extent_y);
                 if (test_y < 0.0f) test_y += extent_y;
             }
-            if (boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC && nz > 0) {
+            if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) {
                 const float extent_z = static_cast<float>(nz) * h;
                 test_z               = fmodf(test_z, extent_z);
                 if (test_z < 0.0f) test_z += extent_z;
@@ -549,7 +737,7 @@ namespace smoke_simulation {
     }
 
     __global__ void compute_vorticity_kernel(float* omega_x, float* omega_y, float* omega_z, float* omega_magnitude, const float* cell_x, const float* cell_y, const float* cell_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -564,12 +752,12 @@ namespace smoke_simulation {
             return;
         }
 
-        const float dvz_dy = 0.5f * (load_scalar(cell_z, x, y + 1, z, nx, ny, nz, boundary) - load_scalar(cell_z, x, y - 1, z, nx, ny, nz, boundary)) / h;
-        const float dvy_dz = 0.5f * (load_scalar(cell_y, x, y, z + 1, nx, ny, nz, boundary) - load_scalar(cell_y, x, y, z - 1, nx, ny, nz, boundary)) / h;
-        const float dvx_dz = 0.5f * (load_scalar(cell_x, x, y, z + 1, nx, ny, nz, boundary) - load_scalar(cell_x, x, y, z - 1, nx, ny, nz, boundary)) / h;
-        const float dvz_dx = 0.5f * (load_scalar(cell_z, x + 1, y, z, nx, ny, nz, boundary) - load_scalar(cell_z, x - 1, y, z, nx, ny, nz, boundary)) / h;
-        const float dvy_dx = 0.5f * (load_scalar(cell_y, x + 1, y, z, nx, ny, nz, boundary) - load_scalar(cell_y, x - 1, y, z, nx, ny, nz, boundary)) / h;
-        const float dvx_dy = 0.5f * (load_scalar(cell_x, x, y + 1, z, nx, ny, nz, boundary) - load_scalar(cell_x, x, y - 1, z, nx, ny, nz, boundary)) / h;
+        const float dvz_dy = 0.5f * (load_center_velocity_component(cell_z, 2, x, y + 1, z, nx, ny, nz, boundary) - load_center_velocity_component(cell_z, 2, x, y - 1, z, nx, ny, nz, boundary)) / h;
+        const float dvy_dz = 0.5f * (load_center_velocity_component(cell_y, 1, x, y, z + 1, nx, ny, nz, boundary) - load_center_velocity_component(cell_y, 1, x, y, z - 1, nx, ny, nz, boundary)) / h;
+        const float dvx_dz = 0.5f * (load_center_velocity_component(cell_x, 0, x, y, z + 1, nx, ny, nz, boundary) - load_center_velocity_component(cell_x, 0, x, y, z - 1, nx, ny, nz, boundary)) / h;
+        const float dvz_dx = 0.5f * (load_center_velocity_component(cell_z, 2, x + 1, y, z, nx, ny, nz, boundary) - load_center_velocity_component(cell_z, 2, x - 1, y, z, nx, ny, nz, boundary)) / h;
+        const float dvy_dx = 0.5f * (load_center_velocity_component(cell_y, 1, x + 1, y, z, nx, ny, nz, boundary) - load_center_velocity_component(cell_y, 1, x - 1, y, z, nx, ny, nz, boundary)) / h;
+        const float dvx_dy = 0.5f * (load_center_velocity_component(cell_x, 0, x, y + 1, z, nx, ny, nz, boundary) - load_center_velocity_component(cell_x, 0, x, y - 1, z, nx, ny, nz, boundary)) / h;
 
         const float wx = dvz_dy - dvy_dz;
         const float wy = dvx_dz - dvz_dx;
@@ -590,7 +778,7 @@ namespace smoke_simulation {
     }
 
     __global__ void add_buoyancy_kernel(float* force_y, const float* density, const float* temperature, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float ambient_temperature, const float density_factor, const float temperature_factor,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -601,16 +789,16 @@ namespace smoke_simulation {
     }
 
     __global__ void add_confinement_kernel(float* force_x, float* force_y, float* force_z, const float* omega_x, const float* omega_y, const float* omega_z, const float* omega_magnitude, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h,
-        const float epsilon, const SmokeSimulationBoundaryConfig boundary) {
+        const float epsilon, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y >= ny || z >= nz) return;
         if (load_occupancy(occupancy, x, y, z, nx, ny, nz, boundary)) return;
 
-        const float grad_x   = 0.5f * (load_scalar(omega_magnitude, x + 1, y, z, nx, ny, nz, boundary) - load_scalar(omega_magnitude, x - 1, y, z, nx, ny, nz, boundary)) / h;
-        const float grad_y   = 0.5f * (load_scalar(omega_magnitude, x, y + 1, z, nx, ny, nz, boundary) - load_scalar(omega_magnitude, x, y - 1, z, nx, ny, nz, boundary)) / h;
-        const float grad_z   = 0.5f * (load_scalar(omega_magnitude, x, y, z + 1, nx, ny, nz, boundary) - load_scalar(omega_magnitude, x, y, z - 1, nx, ny, nz, boundary)) / h;
+        const float grad_x   = 0.5f * (load_flow_cell(omega_magnitude, x + 1, y, z, nx, ny, nz, boundary) - load_flow_cell(omega_magnitude, x - 1, y, z, nx, ny, nz, boundary)) / h;
+        const float grad_y   = 0.5f * (load_flow_cell(omega_magnitude, x, y + 1, z, nx, ny, nz, boundary) - load_flow_cell(omega_magnitude, x, y - 1, z, nx, ny, nz, boundary)) / h;
+        const float grad_z   = 0.5f * (load_flow_cell(omega_magnitude, x, y, z + 1, nx, ny, nz, boundary) - load_flow_cell(omega_magnitude, x, y, z - 1, nx, ny, nz, boundary)) / h;
         const float grad_mag = sqrtf(grad_x * grad_x + grad_y * grad_y + grad_z * grad_z);
         if (grad_mag < 1.0e-6f) return;
 
@@ -688,23 +876,35 @@ namespace smoke_simulation {
         if (weight > 0.0f) velocity_z[index_velocity_z(i, j, k, nx, ny)] += dt * (sum / weight);
     }
 
-    __device__ float solid_velocity_value(const float* solid_velocity, const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
+    __device__ float solid_velocity_value(const float* solid_velocity, const uint8_t* occupancy, int x, int y, int z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
         if (solid_velocity == nullptr || occupancy == nullptr) return 0.0f;
         if (!resolve_cell_coordinates(x, y, z, nx, ny, nz, boundary)) return 0.0f;
         if (occupancy[index_3d(x, y, z, nx, ny)] == 0) return 0.0f;
         return solid_velocity[index_3d(x, y, z, nx, ny)];
     }
 
-    __global__ void enforce_velocity_x_boundaries_kernel(float* velocity_x, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void enforce_velocity_x_boundaries_kernel(float* velocity_x, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (i > nx || j >= ny || k >= nz) return;
 
         auto& face = velocity_x[index_velocity_x(i, j, k, nx, ny)];
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_FIXED && (i == 0 || i == nx)) {
-            face = 0.0f;
-            return;
+        if (i == 0) {
+            const auto domain_face = boundary.x_minus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nx > 0) face = velocity_x[index_velocity_x(1, j, k, nx, ny)];
+                else face = domain_face.velocity_x;
+                return;
+            }
+        }
+        if (i == nx) {
+            const auto domain_face = boundary.x_plus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nx > 0) face = velocity_x[index_velocity_x(nx - 1, j, k, nx, ny)];
+                else face = domain_face.velocity_x;
+                return;
+            }
         }
         if (occupancy == nullptr) return;
 
@@ -733,16 +933,28 @@ namespace smoke_simulation {
         face = weight > 0.0f ? value / weight : 0.0f;
     }
 
-    __global__ void enforce_velocity_y_boundaries_kernel(float* velocity_y, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void enforce_velocity_y_boundaries_kernel(float* velocity_y, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (i >= nx || j > ny || k >= nz) return;
 
         auto& face = velocity_y[index_velocity_y(i, j, k, nx, ny)];
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_FIXED && (j == 0 || j == ny)) {
-            face = 0.0f;
-            return;
+        if (j == 0) {
+            const auto domain_face = boundary.y_minus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && ny > 0) face = velocity_y[index_velocity_y(i, 1, k, nx, ny)];
+                else face = domain_face.velocity_y;
+                return;
+            }
+        }
+        if (j == ny) {
+            const auto domain_face = boundary.y_plus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && ny > 0) face = velocity_y[index_velocity_y(i, ny - 1, k, nx, ny)];
+                else face = domain_face.velocity_y;
+                return;
+            }
         }
         if (occupancy == nullptr) return;
 
@@ -771,16 +983,28 @@ namespace smoke_simulation {
         face = weight > 0.0f ? value / weight : 0.0f;
     }
 
-    __global__ void enforce_velocity_z_boundaries_kernel(float* velocity_z, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void enforce_velocity_z_boundaries_kernel(float* velocity_z, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (i >= nx || j >= ny || k > nz) return;
 
         auto& face = velocity_z[index_velocity_z(i, j, k, nx, ny)];
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_FIXED && (k == 0 || k == nz)) {
-            face = 0.0f;
-            return;
+        if (k == 0) {
+            const auto domain_face = boundary.z_minus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nz > 0) face = velocity_z[index_velocity_z(i, j, 1, nx, ny)];
+                else face = domain_face.velocity_z;
+                return;
+            }
+        }
+        if (k == nz) {
+            const auto domain_face = boundary.z_plus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nz > 0) face = velocity_z[index_velocity_z(i, j, nz - 1, nx, ny)];
+                else face = domain_face.velocity_z;
+                return;
+            }
         }
         if (occupancy == nullptr) return;
 
@@ -831,7 +1055,7 @@ namespace smoke_simulation {
     }
 
     __global__ void advect_velocity_x_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -842,7 +1066,7 @@ namespace smoke_simulation {
     }
 
     __global__ void advect_velocity_y_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -853,7 +1077,7 @@ namespace smoke_simulation {
     }
 
     __global__ void advect_velocity_z_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt,
-        const SmokeSimulationBoundaryConfig boundary) {
+        const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -864,19 +1088,19 @@ namespace smoke_simulation {
     }
 
     __global__ void advect_scalar_kernel(float* destination, const float* source, const float* velocity_x, const float* velocity_y, const float* velocity_z, const uint8_t* occupancy, const int nx, const int ny, const int nz, const float h, const float dt,
-        const uint32_t advection_mode, const SmokeSimulationBoundaryConfig boundary) {
+        const uint32_t advection_mode, const SmokeSimulationScalarBoundaryConfig scalar_boundary, const SmokeSimulationFlowBoundaryConfig flow_boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (x >= nx || y >= ny || z >= nz) return;
-        if (load_occupancy(occupancy, x, y, z, nx, ny, nz, boundary)) {
+        if (load_occupancy(occupancy, x, y, z, nx, ny, nz, flow_boundary)) {
             destination[index_3d(x, y, z, nx, ny)] = 0.0f;
             return;
         }
         const float3 start  = make_float3((static_cast<float>(x) + 0.5f) * h, (static_cast<float>(y) + 0.5f) * h, (static_cast<float>(z) + 0.5f) * h);
-        const float3 traced = trace_particle_rk2(start, velocity_x, velocity_y, velocity_z, occupancy, dt, nx, ny, nz, h, boundary);
-        destination[index_3d(x, y, z, nx, ny)] = advection_mode == SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC ? sample_scalar_cubic(source, traced.x, traced.y, traced.z, nx, ny, nz, h, boundary)
-                                                                                                                           : sample_scalar_linear(source, traced.x, traced.y, traced.z, nx, ny, nz, h, boundary);
+        const float3 traced = trace_particle_rk2(start, velocity_x, velocity_y, velocity_z, occupancy, dt, nx, ny, nz, h, flow_boundary);
+        destination[index_3d(x, y, z, nx, ny)] = advection_mode == SMOKE_SIMULATION_SCALAR_ADVECTION_MONOTONIC_CUBIC ? sample_scalar_cubic(source, traced.x, traced.y, traced.z, nx, ny, nz, h, scalar_boundary)
+                                                                                                                           : sample_scalar_linear(source, traced.x, traced.y, traced.z, nx, ny, nz, h, scalar_boundary);
     }
 
     __global__ void apply_solid_temperature_kernel(float* temperature, const uint8_t* occupancy, const float* solid_temperature, const int nx, const int ny, const int nz, const float ambient_temperature) {
@@ -887,7 +1111,7 @@ namespace smoke_simulation {
         temperature[index] = solid_temperature != nullptr ? solid_temperature[index] : ambient_temperature;
     }
 
-    __global__ void boundary_fill_density_kernel(float* destination, const float* source, const uint8_t* occupancy, const int nx, const int ny, const int nz, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void boundary_fill_density_kernel(float* destination, const float* source, const uint8_t* occupancy, const int nx, const int ny, const int nz, const SmokeSimulationScalarBoundaryConfig boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -913,7 +1137,7 @@ namespace smoke_simulation {
             int next_x = x + offset[0];
             int next_y = y + offset[1];
             int next_z = z + offset[2];
-            if (!resolve_cell_coordinates(next_x, next_y, next_z, nx, ny, nz, boundary)) continue;
+            if (!resolve_scalar_cell_coordinates(next_x, next_y, next_z, nx, ny, nz, boundary)) continue;
             const auto neighbor_index = index_3d(next_x, next_y, next_z, nx, ny);
             if (occupancy[neighbor_index] != 0) continue;
             sum += source[neighbor_index];
@@ -957,7 +1181,7 @@ namespace smoke_simulation {
             h;
     }
 
-    __global__ void rbgs_pressure_kernel(float* pressure, const float* rhs, const uint8_t* occupancy, const int pressure_anchor, const int parity, const int nx, const int ny, const int nz, const float h, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void rbgs_pressure_kernel(float* pressure, const float* rhs, const uint8_t* occupancy, const int pressure_anchor, const int parity, const int nx, const int ny, const int nz, const float h, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int z = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
@@ -976,38 +1200,101 @@ namespace smoke_simulation {
 
         float diagonal = 0.0f;
         float sum      = 0.0f;
-        const int offsets[6][3] = {
-            {-1, 0, 0},
-            {1, 0, 0},
-            {0, -1, 0},
-            {0, 1, 0},
-            {0, 0, -1},
-            {0, 0, 1},
-        };
-        for (const auto& offset : offsets) {
-            int next_x = x + offset[0];
-            int next_y = y + offset[1];
-            int next_z = z + offset[2];
-            if (!resolve_cell_coordinates(next_x, next_y, next_z, nx, ny, nz, boundary)) continue;
-            const auto neighbor_index = index_3d(next_x, next_y, next_z, nx, ny);
-            if (occupancy != nullptr && occupancy[neighbor_index] != 0) continue;
+
+        const auto accumulate_neighbor = [&](int next_x, int next_y, int next_z) {
+            if (next_x < 0 || next_x >= nx || next_y < 0 || next_y >= ny || next_z < 0 || next_z >= nz) {
+                if (next_x < 0) {
+                    if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) next_x = wrap_index(next_x, nx);
+                    else if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) {
+                        diagonal += 1.0f;
+                        sum += boundary.x_minus.pressure;
+                        return;
+                    } else
+                        return;
+                }
+                if (next_x >= nx) {
+                    if (boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nx > 0) next_x = wrap_index(next_x, nx);
+                    else if (boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) {
+                        diagonal += 1.0f;
+                        sum += boundary.x_plus.pressure;
+                        return;
+                    } else
+                        return;
+                }
+                if (next_y < 0) {
+                    if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) next_y = wrap_index(next_y, ny);
+                    else if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) {
+                        diagonal += 1.0f;
+                        sum += boundary.y_minus.pressure;
+                        return;
+                    } else
+                        return;
+                }
+                if (next_y >= ny) {
+                    if (boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && ny > 0) next_y = wrap_index(next_y, ny);
+                    else if (boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) {
+                        diagonal += 1.0f;
+                        sum += boundary.y_plus.pressure;
+                        return;
+                    } else
+                        return;
+                }
+                if (next_z < 0) {
+                    if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) next_z = wrap_index(next_z, nz);
+                    else if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) {
+                        diagonal += 1.0f;
+                        sum += boundary.z_minus.pressure;
+                        return;
+                    } else
+                        return;
+                }
+                if (next_z >= nz) {
+                    if (boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && nz > 0) next_z = wrap_index(next_z, nz);
+                    else if (boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW) {
+                        diagonal += 1.0f;
+                        sum += boundary.z_plus.pressure;
+                        return;
+                    } else
+                        return;
+                }
+            }
+
+            if (occupancy != nullptr && occupancy[index_3d(next_x, next_y, next_z, nx, ny)] != 0) return;
             diagonal += 1.0f;
-            if (static_cast<int>(neighbor_index) == pressure_anchor) continue;
-            sum += pressure[neighbor_index];
-        }
+            sum += pressure[index_3d(next_x, next_y, next_z, nx, ny)];
+        };
+
+        accumulate_neighbor(x - 1, y, z);
+        accumulate_neighbor(x + 1, y, z);
+        accumulate_neighbor(x, y - 1, z);
+        accumulate_neighbor(x, y + 1, z);
+        accumulate_neighbor(x, y, z - 1);
+        accumulate_neighbor(x, y, z + 1);
         pressure[index] = diagonal > 0.0f ? (sum + rhs[index] * h * h) / diagonal : 0.0f;
     }
 
-    __global__ void project_velocity_x_kernel(float* velocity_x, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void project_velocity_x_kernel(float* velocity_x, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_x, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (i > nx || j >= ny || k >= nz) return;
 
         auto& face = velocity_x[index_velocity_x(i, j, k, nx, ny)];
-        if (boundary.x == SMOKE_SIMULATION_BOUNDARY_FIXED && (i == 0 || i == nx)) {
-            face = 0.0f;
-            return;
+        if (i == 0) {
+            const auto domain_face = boundary.x_minus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nx > 0) face = velocity_x[index_velocity_x(1, j, k, nx, ny)];
+                else face = domain_face.velocity_x;
+                return;
+            }
+        }
+        if (i == nx) {
+            const auto domain_face = boundary.x_plus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nx > 0) face = velocity_x[index_velocity_x(nx - 1, j, k, nx, ny)];
+                else face = domain_face.velocity_x;
+                return;
+            }
         }
 
         int left_x   = i - 1;
@@ -1041,16 +1328,28 @@ namespace smoke_simulation {
         }
     }
 
-    __global__ void project_velocity_y_kernel(float* velocity_y, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void project_velocity_y_kernel(float* velocity_y, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_y, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (i >= nx || j > ny || k >= nz) return;
 
         auto& face = velocity_y[index_velocity_y(i, j, k, nx, ny)];
-        if (boundary.y == SMOKE_SIMULATION_BOUNDARY_FIXED && (j == 0 || j == ny)) {
-            face = 0.0f;
-            return;
+        if (j == 0) {
+            const auto domain_face = boundary.y_minus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && ny > 0) face = velocity_y[index_velocity_y(i, 1, k, nx, ny)];
+                else face = domain_face.velocity_y;
+                return;
+            }
+        }
+        if (j == ny) {
+            const auto domain_face = boundary.y_plus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && ny > 0) face = velocity_y[index_velocity_y(i, ny - 1, k, nx, ny)];
+                else face = domain_face.velocity_y;
+                return;
+            }
         }
 
         int down_x   = i;
@@ -1084,16 +1383,28 @@ namespace smoke_simulation {
         }
     }
 
-    __global__ void project_velocity_z_kernel(float* velocity_z, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationBoundaryConfig boundary) {
+    __global__ void project_velocity_z_kernel(float* velocity_z, const float* pressure, const uint8_t* occupancy, const float* solid_velocity_z, const int nx, const int ny, const int nz, const float h, const float dt, const SmokeSimulationFlowBoundaryConfig boundary) {
         const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         const int j = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
         const int k = static_cast<int>(blockIdx.z * blockDim.z + threadIdx.z);
         if (i >= nx || j >= ny || k > nz) return;
 
         auto& face = velocity_z[index_velocity_z(i, j, k, nx, ny)];
-        if (boundary.z == SMOKE_SIMULATION_BOUNDARY_FIXED && (k == 0 || k == nz)) {
-            face = 0.0f;
-            return;
+        if (k == 0) {
+            const auto domain_face = boundary.z_minus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nz > 0) face = velocity_z[index_velocity_z(i, j, 1, nx, ny)];
+                else face = domain_face.velocity_z;
+                return;
+            }
+        }
+        if (k == nz) {
+            const auto domain_face = boundary.z_plus;
+            if (domain_face.type != SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) {
+                if (domain_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW && nz > 0) face = velocity_z[index_velocity_z(i, j, nz - 1, nx, ny)];
+                else face = domain_face.velocity_z;
+                return;
+            }
         }
 
         int back_x   = i;
@@ -1225,6 +1536,29 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
     try {
         context->config          = desc->config;
         context->stream          = static_cast<cudaStream_t>(desc->stream);
+        auto valid_flow_face = [](const SmokeSimulationFlowBoundaryFaceDesc face) {
+            return face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_NO_SLIP_WALL || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW || face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC;
+        };
+        auto valid_scalar_face = [](const SmokeSimulationScalarBoundaryFaceDesc face) {
+            return face.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE || face.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_ZERO_FLUX || face.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC;
+        };
+        auto valid_flow_axis = [&](const SmokeSimulationFlowBoundaryFaceDesc minus_face, const SmokeSimulationFlowBoundaryFaceDesc plus_face) {
+            if (!valid_flow_face(minus_face) || !valid_flow_face(plus_face)) return false;
+            return (minus_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC) == (plus_face.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC);
+        };
+        auto valid_scalar_axis = [&](const SmokeSimulationScalarBoundaryFaceDesc minus_face, const SmokeSimulationScalarBoundaryFaceDesc plus_face) {
+            if (!valid_scalar_face(minus_face) || !valid_scalar_face(plus_face)) return false;
+            return (minus_face.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC) == (plus_face.type == SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC);
+        };
+        if (!valid_flow_axis(context->config.flow_boundary.x_minus, context->config.flow_boundary.x_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_flow_axis(context->config.flow_boundary.y_minus, context->config.flow_boundary.y_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_flow_axis(context->config.flow_boundary.z_minus, context->config.flow_boundary.z_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_scalar_axis(context->config.density_boundary.x_minus, context->config.density_boundary.x_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_scalar_axis(context->config.density_boundary.y_minus, context->config.density_boundary.y_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_scalar_axis(context->config.density_boundary.z_minus, context->config.density_boundary.z_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_scalar_axis(context->config.temperature_boundary.x_minus, context->config.temperature_boundary.x_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_scalar_axis(context->config.temperature_boundary.y_minus, context->config.temperature_boundary.y_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
+        if (!valid_scalar_axis(context->config.temperature_boundary.z_minus, context->config.temperature_boundary.z_plus)) return SMOKE_SIMULATION_RESULT_BACKEND_FAILURE;
         context->cell_count      = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz);
         context->velocity_x_count = static_cast<std::uint64_t>(context->config.nx + 1) * static_cast<std::uint64_t>(context->config.ny) * static_cast<std::uint64_t>(context->config.nz);
         context->velocity_y_count = static_cast<std::uint64_t>(context->config.nx) * static_cast<std::uint64_t>(context->config.ny + 1) * static_cast<std::uint64_t>(context->config.nz);
@@ -1396,6 +1730,9 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             static_cast<unsigned>((context->config.nx + static_cast<int>(context->block.x) - 1) / static_cast<int>(context->block.x)),
             static_cast<unsigned>((context->config.ny + static_cast<int>(context->block.y) - 1) / static_cast<int>(context->block.y)),
             1u);
+        const bool periodic_x = context->config.flow_boundary.x_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && context->config.flow_boundary.x_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC;
+        const bool periodic_y = context->config.flow_boundary.y_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && context->config.flow_boundary.y_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC;
+        const bool periodic_z = context->config.flow_boundary.z_minus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC && context->config.flow_boundary.z_plus.type == SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC;
         float zero_value = 0.0f;
 
         {
@@ -1438,7 +1775,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.ny,
                 &context->config.nz,
                 &context->config.cell_size,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::compute_vorticity_kernel), context->cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode compute_vorticity pre");
         }
@@ -1466,7 +1803,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.ambient_temperature,
                 &context->config.buoyancy_density_factor,
                 &context->config.buoyancy_temperature_factor,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::add_buoyancy_kernel), context->cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode add_buoyancy");
         }
@@ -1485,7 +1822,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.vorticity_confinement,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::add_confinement_kernel), context->cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode add_confinement");
         }
@@ -1530,7 +1867,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_x_boundaries_kernel), context->velocity_x_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_x current");
         }
@@ -1542,7 +1879,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_y_boundaries_kernel), context->velocity_y_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_y current");
         }
@@ -1554,11 +1891,11 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_z_boundaries_kernel), context->velocity_z_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_z current");
         }
-        if (context->config.boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_x) {
             std::array<void*, 4> arguments{
                 &context->device.flow.velocity_x,
                 &context->config.nx,
@@ -1567,7 +1904,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::sync_periodic_velocity_x_kernel), sync_velocity_x_grid, sync_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode sync_velocity_x current");
         }
-        if (context->config.boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_y) {
             std::array<void*, 4> arguments{
                 &context->device.flow.velocity_y,
                 &context->config.nx,
@@ -1576,7 +1913,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::sync_periodic_velocity_y_kernel), sync_velocity_y_grid, sync_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode sync_velocity_y current");
         }
-        if (context->config.boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_z) {
             std::array<void*, 4> arguments{
                 &context->device.flow.velocity_z,
                 &context->config.nx,
@@ -1598,7 +1935,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.dt,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::advect_velocity_x_kernel), context->velocity_x_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode advect_velocity_x");
         }
@@ -1615,7 +1952,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.dt,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::advect_velocity_y_kernel), context->velocity_y_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode advect_velocity_y");
         }
@@ -1632,7 +1969,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.dt,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::advect_velocity_z_kernel), context->velocity_z_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode advect_velocity_z");
         }
@@ -1644,7 +1981,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_x_boundaries_kernel), context->velocity_x_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_x temp");
         }
@@ -1656,7 +1993,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_y_boundaries_kernel), context->velocity_y_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_y temp");
         }
@@ -1668,11 +2005,11 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_z_boundaries_kernel), context->velocity_z_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_z temp");
         }
-        if (context->config.boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_x) {
             std::array<void*, 4> arguments{
                 &context->device.flow.temp_velocity_x,
                 &context->config.nx,
@@ -1681,7 +2018,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::sync_periodic_velocity_x_kernel), sync_velocity_x_grid, sync_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode sync_velocity_x temp");
         }
-        if (context->config.boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_y) {
             std::array<void*, 4> arguments{
                 &context->device.flow.temp_velocity_y,
                 &context->config.nx,
@@ -1690,7 +2027,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::sync_periodic_velocity_y_kernel), sync_velocity_y_grid, sync_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode sync_velocity_y temp");
         }
-        if (context->config.boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_z) {
             std::array<void*, 4> arguments{
                 &context->device.flow.temp_velocity_z,
                 &context->config.nx,
@@ -1737,7 +2074,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                     &context->config.ny,
                     &context->config.nz,
                     &context->config.cell_size,
-                    &context->config.boundary,
+                    &context->config.flow_boundary,
                 };
                 if (!add_kernel_node(context->step_graph.pressure_red_nodes[iteration], tail != nullptr ? &tail : nullptr, tail != nullptr ? 1u : 0u, reinterpret_cast<void*>(smoke_simulation::rbgs_pressure_kernel), context->cells, context->block, arguments.data()))
                     throw std::runtime_error("cudaGraphAddKernelNode pressure_red");
@@ -1755,7 +2092,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                     &context->config.ny,
                     &context->config.nz,
                     &context->config.cell_size,
-                    &context->config.boundary,
+                    &context->config.flow_boundary,
                 };
                 if (!add_kernel_node(context->step_graph.pressure_black_nodes[iteration], tail != nullptr ? &tail : nullptr, tail != nullptr ? 1u : 0u, reinterpret_cast<void*>(smoke_simulation::rbgs_pressure_kernel), context->cells, context->block, arguments.data()))
                     throw std::runtime_error("cudaGraphAddKernelNode pressure_black");
@@ -1773,7 +2110,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.dt,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::project_velocity_x_kernel), context->velocity_x_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode project_velocity_x");
         }
@@ -1788,7 +2125,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.dt,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::project_velocity_y_kernel), context->velocity_y_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode project_velocity_y");
         }
@@ -1803,7 +2140,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nz,
                 &context->config.cell_size,
                 &context->config.dt,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::project_velocity_z_kernel), context->velocity_z_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode project_velocity_z");
         }
@@ -1815,7 +2152,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_x_boundaries_kernel), context->velocity_x_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_x projected");
         }
@@ -1827,7 +2164,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_y_boundaries_kernel), context->velocity_y_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_y projected");
         }
@@ -1839,11 +2176,11 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::enforce_velocity_z_boundaries_kernel), context->velocity_z_cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode enforce_velocity_z projected");
         }
-        if (context->config.boundary.x == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_x) {
             std::array<void*, 4> arguments{
                 &context->device.flow.temp_velocity_x,
                 &context->config.nx,
@@ -1852,7 +2189,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::sync_periodic_velocity_x_kernel), sync_velocity_x_grid, sync_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode sync_velocity_x projected");
         }
-        if (context->config.boundary.y == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_y) {
             std::array<void*, 4> arguments{
                 &context->device.flow.temp_velocity_y,
                 &context->config.nx,
@@ -1861,7 +2198,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::sync_periodic_velocity_y_kernel), sync_velocity_y_grid, sync_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode sync_velocity_y projected");
         }
-        if (context->config.boundary.z == SMOKE_SIMULATION_BOUNDARY_PERIODIC) {
+        if (periodic_z) {
             std::array<void*, 4> arguments{
                 &context->device.flow.temp_velocity_z,
                 &context->config.nx,
@@ -1884,7 +2221,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::add_source_kernel), linear_cells, linear_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode temperature_add_source");
         }
         {
-            std::array<void*, 13> kernel_arguments{
+            std::array<void*, 14> kernel_arguments{
                 &context->device.scalar_fields[smoke_simulation::SMOKE_FIELD_TEMPERATURE].data,
                 &context->device.scalar_fields[smoke_simulation::SMOKE_FIELD_TEMPERATURE].temp,
                 &context->device.flow.velocity_x,
@@ -1897,7 +2234,8 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.cell_size,
                 &context->config.dt,
                 &context->config.scalar_advection_mode,
-                &context->config.boundary,
+                &context->config.temperature_boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::advect_scalar_kernel), context->cells, context->block, kernel_arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode advect_temperature");
         }
@@ -1924,7 +2262,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::add_source_kernel), linear_cells, linear_block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode density_add_source");
         }
         {
-            std::array<void*, 13> arguments{
+            std::array<void*, 14> arguments{
                 &context->device.scalar_fields[smoke_simulation::SMOKE_FIELD_DENSITY].data,
                 &context->device.scalar_fields[smoke_simulation::SMOKE_FIELD_DENSITY].temp,
                 &context->device.flow.velocity_x,
@@ -1937,7 +2275,8 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.cell_size,
                 &context->config.dt,
                 &context->config.scalar_advection_mode,
-                &context->config.boundary,
+                &context->config.density_boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::advect_scalar_kernel), context->cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode advect_density");
         }
@@ -1949,7 +2288,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.nx,
                 &context->config.ny,
                 &context->config.nz,
-                &context->config.boundary,
+                &context->config.density_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::boundary_fill_density_kernel), context->cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode boundary_fill_density");
         }
@@ -1983,7 +2322,7 @@ SmokeSimulationResult smoke_simulation_create_context_cuda(const SmokeSimulation
                 &context->config.ny,
                 &context->config.nz,
                 &context->config.cell_size,
-                &context->config.boundary,
+                &context->config.flow_boundary,
             };
             if (!append_kernel_node(tail, reinterpret_cast<void*>(smoke_simulation::compute_vorticity_kernel), context->cells, context->block, arguments.data())) throw std::runtime_error("cudaGraphAddKernelNode compute_vorticity final");
         }
@@ -2167,7 +2506,7 @@ SmokeSimulationResult smoke_simulation_step_cuda(SmokeSimulationContext context)
                     &storage.config.ny,
                     &storage.config.nz,
                     &storage.config.cell_size,
-                    &storage.config.boundary,
+                    &storage.config.flow_boundary,
                 };
                 cudaKernelNodeParams pressure_red_params{};
                 pressure_red_params.func         = reinterpret_cast<void*>(smoke_simulation::rbgs_pressure_kernel);
@@ -2187,7 +2526,7 @@ SmokeSimulationResult smoke_simulation_step_cuda(SmokeSimulationContext context)
                     &storage.config.ny,
                     &storage.config.nz,
                     &storage.config.cell_size,
-                    &storage.config.boundary,
+                    &storage.config.flow_boundary,
                 };
                 cudaKernelNodeParams pressure_black_params{};
                 pressure_black_params.func         = reinterpret_cast<void*>(smoke_simulation::rbgs_pressure_kernel);

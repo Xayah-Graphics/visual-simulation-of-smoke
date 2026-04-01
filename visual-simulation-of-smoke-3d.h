@@ -25,16 +25,49 @@ typedef enum SmokeSimulationResult {
     SMOKE_SIMULATION_RESULT_BACKEND_FAILURE = 2,
 } SmokeSimulationResult;
 
-typedef enum SmokeSimulationBoundaryMode {
-    SMOKE_SIMULATION_BOUNDARY_FIXED    = 0,
-    SMOKE_SIMULATION_BOUNDARY_PERIODIC = 1,
-} SmokeSimulationBoundaryMode;
+typedef enum SmokeSimulationFlowBoundaryType {
+    SMOKE_SIMULATION_FLOW_BOUNDARY_NO_SLIP_WALL   = 0,
+    SMOKE_SIMULATION_FLOW_BOUNDARY_FREE_SLIP_WALL = 1,
+    SMOKE_SIMULATION_FLOW_BOUNDARY_OUTFLOW        = 2,
+    SMOKE_SIMULATION_FLOW_BOUNDARY_PERIODIC       = 3,
+} SmokeSimulationFlowBoundaryType;
 
-typedef struct SmokeSimulationBoundaryConfig {
-    SmokeSimulationBoundaryMode x;
-    SmokeSimulationBoundaryMode y;
-    SmokeSimulationBoundaryMode z;
-} SmokeSimulationBoundaryConfig;
+typedef enum SmokeSimulationScalarBoundaryType {
+    SMOKE_SIMULATION_SCALAR_BOUNDARY_FIXED_VALUE = 0,
+    SMOKE_SIMULATION_SCALAR_BOUNDARY_ZERO_FLUX   = 1,
+    SMOKE_SIMULATION_SCALAR_BOUNDARY_PERIODIC    = 2,
+} SmokeSimulationScalarBoundaryType;
+
+typedef struct SmokeSimulationFlowBoundaryFaceDesc {
+    uint32_t type;
+    float velocity_x;
+    float velocity_y;
+    float velocity_z;
+    float pressure;
+} SmokeSimulationFlowBoundaryFaceDesc;
+
+typedef struct SmokeSimulationFlowBoundaryConfig {
+    SmokeSimulationFlowBoundaryFaceDesc x_minus;
+    SmokeSimulationFlowBoundaryFaceDesc x_plus;
+    SmokeSimulationFlowBoundaryFaceDesc y_minus;
+    SmokeSimulationFlowBoundaryFaceDesc y_plus;
+    SmokeSimulationFlowBoundaryFaceDesc z_minus;
+    SmokeSimulationFlowBoundaryFaceDesc z_plus;
+} SmokeSimulationFlowBoundaryConfig;
+
+typedef struct SmokeSimulationScalarBoundaryFaceDesc {
+    uint32_t type;
+    float value;
+} SmokeSimulationScalarBoundaryFaceDesc;
+
+typedef struct SmokeSimulationScalarBoundaryConfig {
+    SmokeSimulationScalarBoundaryFaceDesc x_minus;
+    SmokeSimulationScalarBoundaryFaceDesc x_plus;
+    SmokeSimulationScalarBoundaryFaceDesc y_minus;
+    SmokeSimulationScalarBoundaryFaceDesc y_plus;
+    SmokeSimulationScalarBoundaryFaceDesc z_minus;
+    SmokeSimulationScalarBoundaryFaceDesc z_plus;
+} SmokeSimulationScalarBoundaryConfig;
 
 typedef enum SmokeSimulationScalarAdvectionMode {
     SMOKE_SIMULATION_SCALAR_ADVECTION_LINEAR           = 0,
@@ -53,7 +86,9 @@ typedef struct SmokeSimulationConfig {
     float buoyancy_temperature_factor;
     float vorticity_confinement;
     SmokeSimulationScalarAdvectionMode scalar_advection_mode;
-    SmokeSimulationBoundaryConfig boundary;
+    SmokeSimulationFlowBoundaryConfig flow_boundary;
+    SmokeSimulationScalarBoundaryConfig density_boundary;
+    SmokeSimulationScalarBoundaryConfig temperature_boundary;
 } SmokeSimulationConfig;
 
 typedef struct SmokeSimulationContext_t* SmokeSimulationContext;
