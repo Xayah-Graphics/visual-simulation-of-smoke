@@ -38,7 +38,7 @@ target_sources(
         PUBLIC
         visual-simulation-of-smoke-3d.h
 )
-target_link_libraries(visual-simulation-of-smoke PUBLIC CUDA::cudart)
+target_link_libraries(visual-simulation-of-smoke PUBLIC CUDA::cudart CUDA::cublas CUDA::cusparse)
 target_include_directories(visual-simulation-of-smoke PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(visual-simulation-of-smoke PRIVATE VISUAL_SIMULATION_OF_SMOKE_BUILD_SHARED)
 target_compile_options(visual-simulation-of-smoke PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda --expt-relaxed-constexpr>)
@@ -55,7 +55,7 @@ endif ()
 # ============================================================================
 if (SMOKE_BUILD_BENCHMARK)
     add_executable(visual-simulation-of-smoke-benchmark benchmark.cu)
-    target_link_libraries(visual-simulation-of-smoke-benchmark PRIVATE visual-simulation-of-smoke CUDA::cudart)
+    target_link_libraries(visual-simulation-of-smoke-benchmark PRIVATE visual-simulation-of-smoke CUDA::cudart CUDA::cublas CUDA::cusparse)
     target_compile_options(visual-simulation-of-smoke-benchmark PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda --expt-relaxed-constexpr>)
     if (MSVC)
         target_compile_options(visual-simulation-of-smoke-benchmark PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /permissive- /Zc:preprocessor>)
@@ -152,7 +152,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
     )
     add_dependencies(visual-simulation-of-smoke-app visual-simulation-of-smoke-shaders)
     target_compile_definitions(visual-simulation-of-smoke-app PRIVATE SMOKE_SIM_SHADER_DIR="${SMOKE_SIM_SHADER_DIR}" VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1)
-    target_link_libraries(visual-simulation-of-smoke-app PRIVATE Vulkan::Vulkan glfw visual-simulation-of-smoke CUDA::cudart)
+    target_link_libraries(visual-simulation-of-smoke-app PRIVATE Vulkan::Vulkan glfw visual-simulation-of-smoke CUDA::cudart CUDA::cublas CUDA::cusparse)
     target_include_directories(visual-simulation-of-smoke-app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-app/vendor/imgui)
     set_property(TARGET visual-simulation-of-smoke-app PROPERTY CXX_MODULE_STD ON)
     set_property(TARGET visual-simulation-of-smoke-app PROPERTY CXX_SCAN_FOR_MODULES ON)

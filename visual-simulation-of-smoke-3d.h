@@ -81,6 +81,7 @@ typedef struct SmokeSimulationConfig {
     float cell_size;
     float dt;
     int32_t pressure_iterations;
+    float pressure_tolerance;
     float ambient_temperature;
     float buoyancy_density_factor;
     float buoyancy_temperature_factor;

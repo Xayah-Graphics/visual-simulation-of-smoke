@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
         .cell_size                  = cell_size,
         .dt                         = dt,
         .pressure_iterations        = pressure_iterations,
+        .pressure_tolerance         = 1.0e-5f,
         .ambient_temperature        = ambient_temperature,
         .buoyancy_density_factor    = buoyancy_density,
         .buoyancy_temperature_factor = buoyancy_temperature,
