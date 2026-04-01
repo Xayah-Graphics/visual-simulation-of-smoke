@@ -1768,7 +1768,7 @@ namespace smoke_simulation {
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&flow.pressure_negative_alpha), sizeof(float)), "cudaMalloc pressure_negative_alpha");
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&flow.pressure_beta), sizeof(float)), "cudaMalloc pressure_beta");
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&flow.pressure_one), sizeof(float)), "cudaMalloc pressure_one");
-        const float one = 1.0f;
+        constexpr float one = 1.0f;
         check_cuda(cudaMemcpyAsync(flow.pressure_one, &one, sizeof(float), cudaMemcpyHostToDevice, context.stream), "cudaMemcpyAsync pressure_one");
         check_cuda(cudaMemsetAsync(flow.pcg_r, 0, context.cell_bytes, context.stream), "cudaMemsetAsync pcg_r");
         check_cuda(cudaMemsetAsync(flow.pcg_p, 0, context.cell_bytes, context.stream), "cudaMemsetAsync pcg_p");
@@ -1778,8 +1778,8 @@ namespace smoke_simulation {
         if (cusparseCreateCsr(&context.pressure_solver.matrix, cells, cells, flow.pressure_nnz, flow.pressure_row_offsets, flow.pressure_column_indices, flow.pressure_values, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseCreateCsr matrix");
         if (cusparseCreateDnVec(&context.pressure_solver.vec_p, cells, flow.pcg_p, CUDA_R_32F) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseCreateDnVec vec_p");
         if (cusparseCreateDnVec(&context.pressure_solver.vec_ap, cells, flow.pcg_ap, CUDA_R_32F) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseCreateDnVec vec_ap");
-        const float spmv_alpha = 1.0f;
-        const float spmv_beta  = 0.0f;
+        constexpr float spmv_alpha = 1.0f;
+        constexpr float spmv_beta  = 0.0f;
         if (cusparseSpMV_bufferSize(context.pressure_solver.cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha, context.pressure_solver.matrix, context.pressure_solver.vec_p, &spmv_beta, context.pressure_solver.vec_ap, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, &context.pressure_solver.spmv_buffer_size) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseSpMV_bufferSize");
         if (context.pressure_solver.spmv_buffer_size > 0) check_cuda(cudaMalloc(&context.pressure_solver.spmv_buffer, context.pressure_solver.spmv_buffer_size), "cudaMalloc spmv_buffer");
         if (cusparseSpMV_preprocess(context.pressure_solver.cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &spmv_alpha, context.pressure_solver.matrix, context.pressure_solver.vec_p, &spmv_beta, context.pressure_solver.vec_ap, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, context.pressure_solver.spmv_buffer) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseSpMV_preprocess");
@@ -1802,8 +1802,8 @@ namespace smoke_simulation {
         if (cublasScopy(context.pressure_solver.cublas, static_cast<int>(context.cell_count), flow.pcg_r, 1, flow.pcg_p, 1) != CUBLAS_STATUS_SUCCESS) throw std::runtime_error("cublasScopy pcg_p");
         if (cublasSdot(context.pressure_solver.cublas, static_cast<int>(context.cell_count), flow.pcg_r, 1, flow.pcg_r, 1, flow.pressure_dot_rz) != CUBLAS_STATUS_SUCCESS) throw std::runtime_error("cublasSdot pressure_dot_rz");
 
-        const float one  = 1.0f;
-        const float zero = 0.0f;
+        constexpr float one  = 1.0f;
+        constexpr float zero = 0.0f;
 
         for (int iteration = 0; iteration < context.config.pressure_iterations; ++iteration) {
             if (cusparseSpMV(context.pressure_solver.cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE, &one, context.pressure_solver.matrix, context.pressure_solver.vec_p, &zero, context.pressure_solver.vec_ap, CUDA_R_32F, CUSPARSE_SPMV_ALG_DEFAULT, context.pressure_solver.spmv_buffer) != CUSPARSE_STATUS_SUCCESS) throw std::runtime_error("cusparseSpMV");

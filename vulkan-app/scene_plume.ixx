@@ -37,7 +37,7 @@ export namespace scene_plume {
             .nz                          = 96,
             .cell_size                   = 0.01f,
             .dt                          = 1.0f / 90.0f,
-            .pressure_iterations         = 160,
+            .pressure_iterations         = 96,
             .ambient_temperature         = 0.0f,
             .buoyancy_density_factor     = 0.8f,
             .buoyancy_temperature_factor = 0.75f,
